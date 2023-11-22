@@ -149,16 +149,3 @@ function resolveImportMode(
 function pathToName(filepath: string) {
     return filepath.replace(/[\_\.\-\\\/]/g, '_').replace(/[\[:\]()]/g, '$')
 }
-
-export function stringifyRoutes(routes: Route[], modeOption = 'sync' as const) {
-    const imports: string[] = []
-
-    const routesCode = routes
-        .map((route) => stringifyRoute(imports, route, modeOption))
-        .join(',\n')
-
-    return `
-	    ${imports.join(';\n')}
-		export default [${routesCode}];
-	`.trim()
-}
