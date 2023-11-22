@@ -1,7 +1,23 @@
 {
   "name": "ssr-tools",
-  "version": "0.1",
-  "description": "",
+  "version": "0.0.1",
+  "description": "A collection of tools to use in SSR rendering",
+  "license": "MIT",
+  "author": "Michael Cox",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/coxmi/ssr-tools.git"
+  },
+  "bugs": {
+    "url": "https://github.com/coxmi/ssr-tools/issues"
+  },
+  "homepage": "https://github.com/coxmi/ssr-tools#readme",
+  "keywords": [
+    "preact",
+    "ssr",
+    "vite",
+    "islands"
+  ],
   "exports": {
     "./islands": {
       "import": "./dist/islands/index.mjs",
@@ -24,11 +40,11 @@
   "files": [
     "dist"
   ],
-  "author": "Michael Cox",
   "scripts": {
     "dev": "node build.mjs --dev",
     "build": "node build.mjs",
-    "test": "jest"
+    "test": "jest",
+    "publish": "npm version patch && npm publish"
   },
   "peerDependencies": {
     "preact": "^10",
