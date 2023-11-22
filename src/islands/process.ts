@@ -38,20 +38,6 @@ type FunctionParts = {
 	returnExpression: Expression | null
 }
 
-// TODO: remove
-function loggy(pre: string, string: string, bool: boolean) {
-	const red = "\x1b[31m"
-	const green = "\x1b[32m"
-	const reset = "\x1b[0m"
-
-	const highlight = bool 
-		? `${green}${string}${reset}`
-		: `${red}${string}${reset}`
-	console.log(
-		`${pre}\t\t${highlight}`
-	)
-}
-
 
 /*
  * Gets a Statement array and returned Expression from:
@@ -266,9 +252,6 @@ export function processIslands(ast: Program, options: ProcessExportOptions): fal
 					node.declaration = wrapWithCallExpression(functionWrapName, expression)
 					willAddImport = true
 					manifest.push('default')
-					loggy('islandDefaultIdent', name, true)
-				} else {
-					loggy('islandDefaultIdent', name, false)
 				}
 				continue
 			}
@@ -291,9 +274,6 @@ export function processIslands(ast: Program, options: ProcessExportOptions): fal
 					node.declaration = wrapWithCallExpression(functionWrapName, expression)
 					willAddImport = true
 					manifest.push('default')
-					loggy('islandDefaultDeclar', name, true)
-				} else {
-					loggy('islandDefaultDeclar', name, false)
 				}
 				continue
 			}
@@ -318,7 +298,6 @@ export function processIslands(ast: Program, options: ProcessExportOptions): fal
 						if (fn && isNodeIsland(fn, name)) {
 							willAddImport = true
 							manifest.push(exportedName || name)
-							loggy('islandNamedIdent', `${name}:${exportedName}`, true)
 							
 							// remove name specifier and reset loop position
 							node.specifiers.splice(position, 1)
@@ -337,10 +316,6 @@ export function processIslands(ast: Program, options: ProcessExportOptions): fal
 									createNamedExportAST(`__${name}Island`, exportedName || name)
 								)
 							})
-						} else {
-							// TODO: something wrong with this one:
-							// it's catching TestArrowRef, TestArrowRefParens, TestAnonymousFunction in Test3.islands.jsx
-							loggy('islandNamedIdent', `${name}:${exportedName}`, false)
 						}
 					}
 				}
@@ -362,7 +337,6 @@ export function processIslands(ast: Program, options: ProcessExportOptions): fal
 				if (isNodeIsland(fn)) {
 					willAddImport = true
 					manifest.push(name)
-					loggy('islandNamedDeclar', `${name}`, true)
 					// swap export declaration out for simple function|class definition
 					ast.body[position] = node.declaration
 
@@ -377,8 +351,6 @@ export function processIslands(ast: Program, options: ProcessExportOptions): fal
 					ast.body.push(
 						createNamedExportAST(`__${name}Island`, name)
 					)
-				} else {
-					loggy('islandNamedDeclar', `${name}`, false)
 				}
 				continue
 			}
@@ -424,9 +396,6 @@ export function processIslands(ast: Program, options: ProcessExportOptions): fal
 									createNamedExportAST(`__${name}Island`, name)
 								)
 							})
-							loggy('islandNamedIdentAnonymous', `${name}`, true)
-						} else {
-							loggy('islandNamedIdentAnonymous', `${name}`, false)
 						}
 					}
 				}
