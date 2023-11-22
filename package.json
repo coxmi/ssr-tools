@@ -37,17 +37,12 @@
   "dependencies": {
     "@barelyhuman/astring-jsx": "^2.0.1",
     "acorn": "^8.11.2",
-    "acorn-class-fields": "^1.0.0",
-    "acorn-import-assertions": "^1.9.0",
     "acorn-jsx": "^5.3.2",
     "acorn-jsx-walk": "^2.0.0",
-    "acorn-static-class-features": "^1.0.0",
     "acorn-walk": "^8.3.0",
-    "fast-glob": "^3.2.4",
     "glob-to-regexp": "^0.4.1",
     "path-to-regexp": "^6.2.1",
-    "recast": "^0.23.4",
-    "sucrase": "^3.34.0"
+    "recast": "^0.23.4"
   },
   "devDependencies": {
     "@types/glob-to-regexp": "^0.4.4",
