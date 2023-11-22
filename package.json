@@ -36,7 +36,6 @@
       "require": "./dist/file-router/index.cjs"
     }
   },
-  "types": "dist/index.d.ts",
   "files": [
     "dist"
   ],

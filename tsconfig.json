@@ -1,9 +1,13 @@
 {
-  "include": ["src/index.ts"],
+  "include": [
+  	"src/file-router/index.ts",
+  	"src/hydrate/preact.ts",
+  	"src/islands/index.ts",
+  	"src/islands/vite.ts",
+  ],
   "outDir": "dist",
   "compilerOptions": {
   	"strict": true,
-
   	"rootDir": "./src",
   	"outDir": "./dist",
   	"lib": [
@@ -11,7 +15,8 @@
   	],
   	"jsx": "react-jsx",
 	"jsxImportSource": "preact",
-    "emitDeclarationOnly": true,
+	"noEmit": true,
+    "emitDeclarationOnly": false,
     "moduleResolution": "node",
     "esModuleInterop": true,
     "skipLibCheck": true,
