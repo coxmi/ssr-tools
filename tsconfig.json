@@ -1,0 +1,22 @@
+{
+  "include": ["src/index.ts"],
+  "outDir": "dist",
+  "compilerOptions": {
+  	"strict": true,
+
+  	"rootDir": "./src",
+  	"outDir": "./dist",
+  	"lib": [
+  		"ESNext"
+  	],
+  	"jsx": "react-jsx",
+	"jsxImportSource": "preact",
+    "emitDeclarationOnly": true,
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "declaration": true,
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+  }
+}
