@@ -114,14 +114,21 @@ export function createVariableFromVariableDeclarator(...declarators: VariableDec
 	} as VariableDeclaration
 }
 
-export function wrapWithCallExpression(name: string, astExpression: Expression) {
+export function wrapWithCallExpression(name: string, astExpression: Expression, ...args: Array<Expression>) {
 	return {
 		type: 'CallExpression',
 		callee: {
 			type: 'Identifier',
 			name: name
 		},
-		arguments: [astExpression],
+		arguments: [astExpression, ...args],
 		optional: false
 	} as CallExpression
+}
+
+export function createStringLiteral(value: string) {
+	return {
+	    type: 'Literal',
+	    value: value,
+	} as Literal
 }

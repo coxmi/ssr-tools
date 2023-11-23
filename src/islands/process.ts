@@ -3,6 +3,7 @@ import {
 	createNamedExportAST,
 	createVariable,
 	createVariableFromVariableDeclarator,
+	createStringLiteral,
 	wrapWithCallExpression,
 	addImportToAST, 
 	walker 
@@ -198,7 +199,8 @@ function isNodeIsland(nodeAST: FunctionNodes) {
 type ProcessExportOptions = {
 	name: string,
 	importFrom?: string,
-	importNamed?: boolean
+	importNamed?: boolean,
+	pathToSource?: string
 }
 
 type Manifest = Array<string>
@@ -215,8 +217,11 @@ export function processIslands(ast: Program, options: ProcessExportOptions): fal
 	const {
 		name: functionWrapName,
 		importFrom,
-		importNamed = false
+		importNamed = false,
+		pathToSource = ''
 	} = options
+
+	const pathToSourceLiteral = createStringLiteral(pathToSource)
 
 	if (!functionWrapName)
 		throw new Error('`name` must be provided')
@@ -249,7 +254,7 @@ export function processIslands(ast: Program, options: ProcessExportOptions): fal
 				const fn = functions.get(name)
 				if (fn && isNodeIsland(fn)) {
 					const expression = node.declaration
-					node.declaration = wrapWithCallExpression(functionWrapName, expression)
+					node.declaration = wrapWithCallExpression(functionWrapName, expression, { type: 'Literal', value: pathToSource })
 					willAddImport = true
 					manifest.push('default')
 				}
@@ -271,7 +276,11 @@ export function processIslands(ast: Program, options: ProcessExportOptions): fal
 				const fn = node.declaration
 				if (fn && isNodeIsland(fn)) {
 					const expression = node.declaration
-					node.declaration = wrapWithCallExpression(functionWrapName, expression)
+					node.declaration = wrapWithCallExpression(
+						functionWrapName, 
+						expression, 
+						{ type: 'Literal', value: pathToSource }
+					)
 					willAddImport = true
 					manifest.push('default')
 				}
@@ -306,9 +315,14 @@ export function processIslands(ast: Program, options: ProcessExportOptions): fal
 							appendQueue.push(() => {
 								// add island reference to end of ast
 								ast.body.push(
-									createVariable(`__${name}Island`, wrapWithCallExpression(functionWrapName, {
-									    type: 'Identifier', name: name,
-									}))
+									createVariable(
+										`__${name}Island`, 
+										wrapWithCallExpression(
+											functionWrapName, 
+											{ type: 'Identifier', name }, 
+											{ type: 'Literal', value: pathToSource }
+										)
+									)
 								)
 
 								// and add a named export
@@ -342,9 +356,14 @@ export function processIslands(ast: Program, options: ProcessExportOptions): fal
 
 					// add island reference to end of ast
 					ast.body.push(
-						createVariable(`__${name}Island`, wrapWithCallExpression(functionWrapName, {
-						    type: 'Identifier', name: name,
-						}))
+						createVariable(
+							`__${name}Island`, 
+							wrapWithCallExpression(
+								functionWrapName, 
+								{ type: 'Identifier', name },
+								{ type: 'Literal', value: pathToSource },
+							)
+						)
 					)
 
 					// add new export at end of file for wrapped function
@@ -385,10 +404,14 @@ export function processIslands(ast: Program, options: ProcessExportOptions): fal
 
 								// add island reference
 								ast.body.push(
-									createVariable(`__${name}Island`, wrapWithCallExpression(functionWrapName, {
-									    type: 'Identifier',
-									    name: name,
-									}))
+									createVariable(
+										`__${name}Island`, 
+										wrapWithCallExpression(
+											functionWrapName, 
+											{ type: 'Identifier', name },
+											{ type: 'Literal', value: pathToSource }
+										)
+									)
 								)
 
 								// add new export at end of file for wrapped function
