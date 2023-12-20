@@ -1,14 +1,39 @@
-import type { PluginOption, UserConfig, ResolvedConfig } from 'vite'
-import { basename, relative, resolve, join } from 'node:path'
 import fs from 'node:fs'
+import { resolve, join } from 'node:path'
+import { createRequire } from 'node:module'
 import * as vite from 'vite'
 import * as recast from 'recast'
 import { processIslands } from './process.ts'
-import { createImport } from './../utility/createImport.ts'
+import { astFromCode } from './ast.ts'
+import { md5 } from './../utility/crypto.ts'
+import type { PluginOption, UserConfig, ResolvedConfig } from 'vite'
 
+type EntriesToIslands = Record<string, Array<string>>
+type ClientIslandImports = Map<string, ReturnType<typeof createClientIslandImport>>
 
-export function islands(): PluginOption {
-	
+type DescribeImport = {
+	name: string,
+	importFrom: string,
+	importNamed: boolean,
+}
+
+type UserOptions = {
+	provider?: {
+		ssr: DescribeImport,
+		client: DescribeImport
+	}
+}
+
+// TODO: work out how to best get this information to the bundler generation function to include client
+function createImport(props: DescribeImport) {
+	const { name, importFrom, importNamed } = props
+	return importNamed 
+		? `import { ${name} } from "${importFrom}"` 
+		: `import ${name} from "${importFrom}"`
+}
+
+export function islands(userOptions: UserOptions = {}): PluginOption {
+
 	let ssrUserConfig: UserConfig, 
 		ssrResolvedConfig: ResolvedConfig,
 		absRoot: string,
@@ -16,151 +41,237 @@ export function islands(): PluginOption {
 		isSSR: boolean, 
 		manifestFileName: boolean | string
 
-	// map from island src relativeId to import code
-	// to use in the build bundle or dev client load hook
-	const islandImports = new Map<string, string>()
+	const clientIslandImports: ClientIslandImports = new Map()
 
-	const test = {
-		test: false
-	}
-	
+	// save server in plugin scope to access later in dev mode load step
+	let server: vite.ViteDevServer
+
 	return [
+		// islands:ssr plugin
+		// process server files & wrap island exports with hydration function
+		// saves clientIslandImports in global scope
 		{
-			name: 'islands',
+			name: 'islands:ssr',
 			config(config) {
 				ssrUserConfig = config
 				return {
-					build: {
-						emptyOutDir: false
-					}
+					build: { emptyOutDir: false }
 				}
 			},
+
 			configResolved(resolvedConfig) {
 				ssrResolvedConfig = resolvedConfig
+				const mode = resolvedConfig.mode
+				const command = resolvedConfig.command
 				isBuild = resolvedConfig.command === 'build'
-				absRoot = resolvedConfig.root
 				isSSR = !!resolvedConfig?.build.ssr
+				absRoot = resolvedConfig.root
 				manifestFileName = resolvedConfig?.build.manifest
+				// console.log({ isBuild, isSSR, mode, command, opts: resolvedConfig.build?.rollupOptions?.input })
 			},
+
 			async transform(code, id, options) {
 
-				// only work on ssr transofmrations
-				// we parse the source files for islands then add bundled
-				// island files as virtuals for the client later on
-				if (!options.ssr) return
+				// only work on ssr transformations
+				if (!options?.ssr) return
 
 				// only match js/ts files
 				const matchJs = /\.(ts|js)x?$/i
 				if (!matchJs.test(id)) return
 
-				// use recast to create the AST (any changes maintain a sourcemap)
-				// to pass back to rollup
-				const ast = recast.parse(code, {
-				  parser: { parse: this.parse },
-				  sourceFileName: id,
-				})
+				// recast causes errors on const { ...props } = obj
+				// need to rethink this to get sourcemaps working
+				// 	const ast = recast.parse(code, {
+				//    parser: { parse: astFromCode },
+				//    sourceFileName: id,
+				// 	}).program
+				const ast = astFromCode(code)
 
-				// in dev mode, the relative path to the source file
-				// is put into the SSR html source
-				const relativeId = '/' + relative(absRoot, id)
-
-				const exported = processIslands(ast.program, {
+				const exported = processIslands(ast, {
 					name: 'ssr',
 					importFrom: 'ssr-tools/hydrate/preact',
 					importNamed: true,
-					pathToSource: null,
+					pathToSource: id,
+					importId: md5(id)
 				})
 				if (!exported) return
 
-				// remove all extensions from basename and convert to pascal case
-				const defaultName = toPascalCase(
-					basename(id).replace(/\..+$/, '')
-				)
-
-				const virtualImportCode = createImport({ 
-					absPathToFile: id, 
-					imports: exported || [], 
-					defaultName: defaultName 
+				const clientImport = createClientIslandImport({ 
+					absPathToFile: id,
+					exported: exported
 				})
 
-				islandImports.set(relativeId, virtualImportCode)
-
-				// console.log(`————${relativeId}————`)
-				// console.log(
-				// 	exported 
-				// 		? `Island exports: ${exported.join(', ')}`
-				// 		: 'No island exports'
-				// )
-				// console.log(virtualImportCode)
-				// console.log("\n")
-
-				// console.log(this.getModuleInfo(id))
-				// clientBuild()
-
-				const { code: processed, map } = recast.print(ast, { 
-					sourceMapName: 'unused-truthy-string-to-allow-sourcemaps' 
-				})
+				clientIslandImports.set(id, clientImport)
 
 				// don't pass the AST back to rollup/vite, 
 				// recast hooks cause a bug in rollup
+				const { code: processed, map } = recast.print(ast, { 
+					sourceMapName: 'unused-truthy-string-to-allow-sourcemaps' 
+				})
 				return { code: processed, map }
 			},
 
-			// at the end of the build, create the client bundle and add it to the manifest
-			// with this.emitFile
-			async buildEnd(error) {
-				const manifest = await clientBuild(ssrResolvedConfig, ssrUserConfig)
-				test.test = true
-				manifest.output.map(file => {
-					if (!file.name) return
+			async resolveId(id, _from, options) {
+				// required for import in ssr transform — repositories using `npm link` error with:
+				// [vite]: Rollup failed to resolve import "ssr-tools/hydrate/preact" from "../linked-package/path/to/component.tsx".
+				if (id === 'ssr-tools/hydrate/preact') {
+					return createRequire(import.meta.url).resolve('ssr-tools/hydrate/preact')
+				}
+			},
+
+			async buildEnd() {
+				// build the client bundles (runs in non-dev modes only)
+				// save output in main build manifest using `this.emitFile`
+				const entriesToIslands = getBuildEntriesToIslands(this, clientIslandImports)
+				const { global: globalCode, ...routeCode } = createClientCode(entriesToIslands, clientIslandImports)
+
+				const manifest = await bundleClient(ssrResolvedConfig, ssrUserConfig, globalCode)
+				
+				manifest?.output.map(file => {
+					if (!file.name || file.type === 'asset') return
+					const name = `${file.name}.js`
 					this.emitFile({
 						type: 'asset',
-						name: `${file.name}.js`,
+						name: name,
 						source: file.code,
 					})
 					if (file.map) {
+						const mapSource = JSON.stringify(file.map)
 						this.emitFile({
 							type:'asset',
 							fileName: file.sourcemapFileName,
-							source: JSON.stringify(file.map)
+							source: mapSource
 						})
 					}
 				})
-			}
+			},
 		},
 
-		// only for development mode
+		// islands:dev plugin
+		// processes requests for /@islands-client in dev mode and generates client file
 		{
-			name: 'islands:client',
-			resolveId(id, options) {
-				if (id === '/islands.js') {
-					return id
-				}
+			name: 'islands:dev',
+			configureServer(_server) {
+		      server = _server
+		    },			
+			transformIndexHtml() {
+				// add script to the html output in dev mode
+				return [{ 
+					tag: 'script', 
+					attrs: { src: '/@islands-dev', type: 'module' }, 
+					injectTo: 'body' 
+				}]
 			},
+
 			load(id, options) {
-				if (!options.ssr && id === '/islands.js') {
-					return `
-						import { client } from 'ssr-tools/hydrate/preact'
-						client()
-					`
-				}
-			}
+				if (options?.ssr) return
+				if (!id.startsWith('/@islands-dev')) return
+				const entriesToIslands = getDevEntriesToIslands(server, clientIslandImports)
+				const codeOutput = createClientCode(entriesToIslands, clientIslandImports)
+				// TODO: for route-specific loading
+				// const routeId = id.slice('/@islands-client:'.length)
+				// return codeOutput[routeId] || codeOutput.global
+				return codeOutput.global
+			},
 		}
 	]
 }
 
 
-async function clientBuild(ssrResolvedConfig: ResolvedConfig, ssrUserConfig: UserConfig) {
+/**
+ * Iterates through ModulesInfo references in build mode, and tests to see whether
+ * those modules are in the ClientIslandImports map generated in the transform step
+ */
+function getBuildEntriesToIslands(context: vite.Rollup.PluginContext, clientIslandImports: ClientIslandImports): EntriesToIslands {
 
-	const clientDevPath = 'islands:client'
+	const modules = [...context.getModuleIds()].map(id => context.getModuleInfo(id))	
+	const entryModulesInfo = modules.filter(info => {
+		return info !== null && !info.isExternal && info.isEntry
+	}) as vite.Rollup.ModuleInfo[]
+
+	const entriesToIslands: EntriesToIslands = {}
+
+	for (const moduleInfo of entryModulesInfo) {
+		const islands = walkIslandsInModuleInfoMap(context, moduleInfo, clientIslandImports)
+		if (islands.length) entriesToIslands[moduleInfo.id] = islands
+	}
+	return entriesToIslands
+}
+
+function walkIslandsInModuleInfoMap(
+	context: vite.Rollup.PluginContext,
+	parentNode: vite.Rollup.ModuleInfo, 
+	clientIslandImports: ClientIslandImports,
+	islandIds: string[] = [],
+	visited: Record<string, true> = {}
+) {
+	for (const id of [...parentNode.dynamicallyImportedIds, ...parentNode.importedIds ]) {
+		const node = context.getModuleInfo(id)
+		if (!node || !node.id) continue
+		if (visited[node.id]) continue
+		if (clientIslandImports.has(node.id)) {
+			islandIds.push(node.id)
+		}
+		visited[node.id] = true
+		walkIslandsInModuleInfoMap(context, node, clientIslandImports, islandIds, visited)
+	}
+	return islandIds
+}
+
+
+/**
+ * Iterates through ModuleGraph in dev mode, and tests to see whether
+ * those modules are in the ClientIslandImports map generated in the transform step
+ */
+function getDevEntriesToIslands(server: vite.ViteDevServer, clientIslandImports: ClientIslandImports) {
+
+	const entryNodes = [...server.moduleGraph.idToModuleMap.values()].filter(node => {
+		if (node.type !== 'js') return false
+		if (node.importers.size) return false
+		return true
+	})
+
+	const entriesToIslands: EntriesToIslands = {}
+	for (const node of entryNodes) {
+		if (!node.id) continue
+		const islands = walkIslandsInModuleGraph(node, clientIslandImports)
+		if (islands.length) entriesToIslands[node.id] = islands
+	}
+	return entriesToIslands
+}
+
+function walkIslandsInModuleGraph(
+	parentNode: vite.ModuleNode, 
+	clientIslandImports: ClientIslandImports,
+	islandIds: string[] = [], 
+	visited: Record<string, true> = {}
+) {
+	for (const node of parentNode.ssrImportedModules) {
+		if (!node.id) continue
+		if (visited[node.id]) continue
+		if (clientIslandImports.has(node.id)) {
+			islandIds.push(node.id)
+		}
+		visited[node.id] = true
+		walkIslandsInModuleGraph(node, clientIslandImports, islandIds, visited)
+	}
+	return islandIds
+}
+
+
+/**
+ * Uses a sub compiler to bundle client code generated from previous ssr processing
+ */
+async function bundleClient(ssrResolvedConfig: ResolvedConfig, ssrUserConfig: UserConfig, clientCode: string) {
+
+	const clientVirtualId = '/@islands-client-bundle'
 
 	const ssrPlugins = ssrUserConfig?.plugins || []
-	const clientPlugins = ssrPlugins.flat().filter(
-		plugin => !plugin.name.startsWith('islands')
-	)	
+	const clientPlugins = (ssrPlugins.flat() as vite.Plugin[]).filter(
+		plugin => plugin && plugin.name && !plugin.name.startsWith('islands:')
+	)
 
 	const { root } = ssrResolvedConfig
-	const absOutDir = resolve(root, ssrResolvedConfig.build.outDir)
 	const clientOutDir = join(ssrResolvedConfig.build.outDir, '../.islands')
 	const absClientOutDir = resolve(root, clientOutDir)
 
@@ -177,25 +288,20 @@ async function clientBuild(ssrResolvedConfig: ResolvedConfig, ssrUserConfig: Use
 			outDir: clientOutDir,
 			rollupOptions: {
 				...(ssrUserConfig?.build?.rollupOptions || {}),
-				input: [
-					clientDevPath
-				],
+				input: [clientVirtualId],
 			}
 		},
 		plugins: [
 			...clientPlugins,
 			{
-				name: 'islands:client',
+				name: 'islands:client-bundle',
 				enforce: 'pre',
 				resolveId(id) {
-					if (id === clientDevPath) return 'islands'
+					if (id === clientVirtualId) return clientVirtualId
 				},
 				load(id) {
-					if (id === 'islands') {
-						return `
-							import { client } from 'ssr-tools/hydrate/preact'
-							client()
-						`
+					if (id === clientVirtualId) {
+						return clientCode
 					}
 				}
 			},
@@ -208,7 +314,65 @@ async function clientBuild(ssrResolvedConfig: ResolvedConfig, ssrUserConfig: Use
 	return manifest
 }
 
+function createClientCode(entriesToIslands: EntriesToIslands, clientIslandImports: ClientIslandImports) {
 
-function toPascalCase(text) {
-	return text.replace(/(^\w|-\w)/g, text => text.replace(/-/, "").toUpperCase())
+	const codeOutput: Record<string, string> = {}
+	const globalImports: Array<string> = []
+	const globalVariables: Array<string> = []
+
+	const bundle = ({ imports, variables }: { imports: Array<string>, variables: Array<string>}) => {
+		return ''
+			+ imports.join("\n") 
+			+ "\n" 
+			+ `import { client as __islandClient } from "ssr-tools/hydrate/preact"` + "\n" 
+			+ `window.__islands = {` + "\n"
+			+ variables.map(variable => `  ${variable}`).join(",\n") + "\n"
+			+ '}' + "\n"
+			+ "__islandClient()"
+	}
+
+	for (const entry in entriesToIslands) {
+		const imports: Array<string> = []
+		const variables: Array<string> = []
+		entriesToIslands[entry].forEach(island => {
+			const islandImport = clientIslandImports.get(island)
+			if (!islandImport) return
+			imports.push(...islandImport.code)
+			globalImports.push(...islandImport.code)
+			variables.push(...islandImport.exportMap.values())
+			globalVariables.push(...islandImport.exportMap.values())
+		})
+		codeOutput[entry] = bundle({ imports, variables })
+	}
+	
+	codeOutput.global = bundle({ imports: globalImports, variables: globalVariables })
+	return codeOutput
+}
+
+
+type CreateImportsOptions = {
+	absPathToFile: string, 
+	exported: Array<string>
+}
+
+export function createClientIslandImport({ absPathToFile, exported = [] }: CreateImportsOptions) {
+	// we don't want the full absolute path appearing in the source, so we
+	// generate a client friendly id, which is used later in the 
+	// hydration script and client output
+	const suffix = '_' + md5(absPathToFile)
+	const variables: Array<string> = []
+	const exportMap: Map<string, string> = new Map()
+
+	const code = exported.map(name => {
+		const as = name + suffix
+		exportMap.set(name, as)
+		variables.push(as)
+		return `import { ${name} as ${as} } from "${absPathToFile}"`
+	})
+	return { 
+		code, 
+		variables,
+		names: exported,
+		exportMap
+	}
 }

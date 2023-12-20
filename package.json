@@ -18,22 +18,17 @@
     "vite",
     "islands"
   ],
+  "type": "module",
   "exports": {
     "./islands": {
-      "import": "./dist/islands/index.mjs",
-      "require": "./dist/islands/index.cjs"
+      "import": "./dist/islands/index.mjs"
     },
     "./islands/vite": {
-      "import": "./dist/islands/vite.mjs",
-      "require": "./dist/islands/vite.cjs"
+      "import": "./dist/islands/vite.mjs"
     },
-    "./hydrate/preact": {
-      "import": "./dist/hydrate/preact.mjs",
-      "require": "./dist/hydrate/preact.cjs"
-    },
+    "./hydrate/preact": "./dist/hydrate/preact.mjs",
     "./file-router": {
-      "import": "./dist/file-router/index.mjs",
-      "require": "./dist/file-router/index.cjs"
+      "import": "./dist/file-router/index.mjs"
     }
   },
   "files": [
@@ -49,6 +44,8 @@
     "vite": "^4"
   },
   "dependencies": {
+    "@babel/generator": "^7.23.4",
+    "@babel/parser": "^7.23.4",
     "@barelyhuman/astring-jsx": "^2.0.1",
     "acorn": "^8.11.2",
     "acorn-jsx": "^5.3.2",

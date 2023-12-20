@@ -3,7 +3,6 @@ import {
 	createNamedExportAST,
 	createVariable,
 	createVariableFromVariableDeclarator,
-	createStringLiteral,
 	wrapWithCallExpression,
 	addImportToAST, 
 	walker 
@@ -197,17 +196,26 @@ function isNodeIsland(nodeAST: FunctionNodes) {
 
 
 type ProcessExportOptions = {
+	/** Name of function to wrap exports with */
 	name: string,
+	/** Node path e.g. `ssr-tools/hydrate/preact` of file to import hydration function from */
 	importFrom?: string,
+	/** Import the function with a named import (`name` argument) */
 	importNamed?: boolean,
-	pathToSource?: string
+	/** Pass the path to the source file to the hydration function */
+	pathToSource: string
+	/** An ID for the source file to generate unique export names  */
+	importId: string
 }
 
-type Manifest = Array<string>
 
-/*
- * Not a pure function, the AST's exports are transformed in place
- * Do a structuredClone(ast) before using if you need purity
+type Manifest = string[]
+
+/**
+ * Processes islands exported in file and wraps island exports in a function, e.g. 
+ * `export default ssr(IslandComponent, exportedName, '/path/to/source.jsx')`
+ * @returns List of exports `[default, exportName1, exportName2, ...]`
+ * @note Not a pure function, the AST's exports are transformed in place. Do a `structuredClone(ast)` before using if you need purity.
  */
 export function processIslands(ast: Program, options: ProcessExportOptions): false | Manifest {
 
@@ -218,10 +226,9 @@ export function processIslands(ast: Program, options: ProcessExportOptions): fal
 		name: functionWrapName,
 		importFrom,
 		importNamed = false,
-		pathToSource = ''
+		pathToSource = '',
+		importId = ''
 	} = options
-
-	const pathToSourceLiteral = createStringLiteral(pathToSource)
 
 	if (!functionWrapName)
 		throw new Error('`name` must be provided')
@@ -240,6 +247,10 @@ export function processIslands(ast: Program, options: ProcessExportOptions): fal
 	// gather island exports in manifest
 	const manifest: Manifest = []
 
+	const componentId = (exportName: string): string => {
+		return exportName + '_' + importId
+	}
+
 	for (let i = 0; i < ast.body.length; i++) {
 		const position = i
 		const node = ast.body[i]
@@ -254,7 +265,13 @@ export function processIslands(ast: Program, options: ProcessExportOptions): fal
 				const fn = functions.get(name)
 				if (fn && isNodeIsland(fn)) {
 					const expression = node.declaration
-					node.declaration = wrapWithCallExpression(functionWrapName, expression, { type: 'Literal', value: pathToSource })
+					node.declaration = wrapWithCallExpression(
+						functionWrapName, 
+						expression, 
+						{ type: 'Literal', value: 'default' },
+						{ type: 'Literal', value: componentId('default') },
+						{ type: 'Literal', value: pathToSource }
+					)
 					willAddImport = true
 					manifest.push('default')
 				}
@@ -279,6 +296,8 @@ export function processIslands(ast: Program, options: ProcessExportOptions): fal
 					node.declaration = wrapWithCallExpression(
 						functionWrapName, 
 						expression, 
+						{ type: 'Literal', value: 'default' },
+						{ type: 'Literal', value: componentId('default') },
 						{ type: 'Literal', value: pathToSource }
 					)
 					willAddImport = true
@@ -301,12 +320,12 @@ export function processIslands(ast: Program, options: ProcessExportOptions): fal
 						// local name is within the file,
 						// exported is the `export { ref as name }` exported name
 						const name = specifier.local.name
-						const exportedName = specifier.exported.name
+						const exportedName = specifier.exported.name || name
 						const fn = functions.get(name)
 
 						if (fn && isNodeIsland(fn, name)) {
 							willAddImport = true
-							manifest.push(exportedName || name)
+							manifest.push(exportedName)
 							
 							// remove name specifier and reset loop position
 							node.specifiers.splice(position, 1)
@@ -320,6 +339,8 @@ export function processIslands(ast: Program, options: ProcessExportOptions): fal
 										wrapWithCallExpression(
 											functionWrapName, 
 											{ type: 'Identifier', name }, 
+											{ type: 'Literal', value: exportedName },
+											{ type: 'Literal', value: componentId(exportedName) },
 											{ type: 'Literal', value: pathToSource }
 										)
 									)
@@ -327,7 +348,7 @@ export function processIslands(ast: Program, options: ProcessExportOptions): fal
 
 								// and add a named export
 								ast.body.push(
-									createNamedExportAST(`__${name}Island`, exportedName || name)
+									createNamedExportAST(`__${name}Island`, exportedName)
 								)
 							})
 						}
@@ -361,6 +382,8 @@ export function processIslands(ast: Program, options: ProcessExportOptions): fal
 							wrapWithCallExpression(
 								functionWrapName, 
 								{ type: 'Identifier', name },
+								{ type: 'Literal', value: name },
+								{ type: 'Literal', value: componentId(name) },
 								{ type: 'Literal', value: pathToSource },
 							)
 						)
@@ -409,6 +432,8 @@ export function processIslands(ast: Program, options: ProcessExportOptions): fal
 										wrapWithCallExpression(
 											functionWrapName, 
 											{ type: 'Identifier', name },
+											{ type: 'Literal', value: name },
+											{ type: 'Literal', value: componentId(name) },
 											{ type: 'Literal', value: pathToSource }
 										)
 									)

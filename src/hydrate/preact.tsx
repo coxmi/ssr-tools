@@ -1,4 +1,4 @@
-import { render, createContext } from 'preact'
+import { h, hydrate, createContext } from 'preact'
 import { useContext } from 'preact/hooks'
 
 const isServer = typeof window === 'undefined'
@@ -11,9 +11,9 @@ if (isServer) {
 }
 
 
-export const ssr = (Component, importPath) => (props) => {
+export const ssr = (Component, name, componentId, importPath) => (props) => {
 
-	const name = Component.name || Component.prototype?.constructor?.name
+	// const name = Component.name || Component.prototype?.constructor?.name || name
 	const hasParentHydration = useContext(HydrationContext)
 	
 	if (!hasParentHydration && Object.values(props).find((prop) => typeof prop === 'function'))
@@ -22,7 +22,7 @@ export const ssr = (Component, importPath) => (props) => {
 	return hasParentHydration
 		? <Component {...props} /> 
 		: <HydrationContext.Provider value={true}>
-			<preact-island data-name={name} data-props={JSON.stringify(props)} data-import={importPath}>
+			<preact-island data-name={name} data-props={JSON.stringify(props)} data-component={componentId}>
 				<Component {...props} />
 			</preact-island>
 			{/*<script src={pathToSource} data-name={name} data-props={JSON.stringify(props)} />*/}
@@ -39,12 +39,9 @@ export const client = () => {
 		}
 
 	  	async connectedCallback() {
-	  		console.log(this.dataset)
-	  		const script = this.dataset.import
-	  		const name = this.dataset.name
-	  		// const component = (await import(/* @vite-ignore */ script))[name]
+	  		const component = window.__islands[`${this.dataset.component}`]
 	  		const props = JSON.parse(this.dataset.props  || '{}')
-	  		// render(h(component, props), this)
+	  		hydrate(h(component, props), this)
 		}
 	})
 }

@@ -130,5 +130,7 @@ export function createStringLiteral(value: string) {
 	return {
 	    type: 'Literal',
 	    value: value,
+	    start: 0,
+	    end: 0
 	} as Literal
 }
