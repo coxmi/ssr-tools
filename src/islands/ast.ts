@@ -11,7 +11,8 @@ import type {
     CallExpression,
     ExportNamedDeclaration,
     VariableDeclaration,
-    VariableDeclarator
+    VariableDeclarator,
+    Literal
 } from 'acorn'
 
 jsxWalk(walk.base)

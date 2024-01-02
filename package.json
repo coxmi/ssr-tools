@@ -20,16 +20,11 @@
   ],
   "type": "module",
   "exports": {
-    "./islands": {
-      "import": "./dist/islands/index.mjs"
-    },
-    "./islands/vite": {
-      "import": "./dist/islands/vite.mjs"
-    },
-    "./hydrate/preact": "./dist/hydrate/preact.mjs",
-    "./file-router": {
-      "import": "./dist/file-router/index.mjs"
-    }
+    "./islands/vite": "./dist/islands/vite.mjs",
+    "./islands/preact": "./dist/islands/providers/preact/index.mjs",
+    "./islands/preact/client": "./dist/islands/providers/preact/client.mjs",
+    "./islands/preact/ssr": "./dist/islands/providers/preact/ssr.mjs",
+    "./file-router": "./dist/file-router/index.mjs"
   },
   "files": [
     "dist"

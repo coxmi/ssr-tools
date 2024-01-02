@@ -6,10 +6,20 @@ import * as recast from 'recast'
 import { processIslands } from './process.ts'
 import { astFromCode } from './ast.ts'
 import { md5 } from './../utility/crypto.ts'
-import type { PluginOption, UserConfig, ResolvedConfig } from 'vite'
+import type { PluginOption, UserConfig, ResolvedConfig, ViteDevServer, Rollup } from 'vite'
+import preactProvider from './providers/preact/index.ts'
 
 type EntriesToIslands = Record<string, Array<string>>
 type ClientIslandImports = Map<string, ReturnType<typeof createClientIslandImport>>
+
+export type UserOptions = {
+	provider?: Provider
+}
+
+export type Provider = {
+	ssr: DescribeImport,
+	bundle: (props:{ imports: string[], variables: string[] }) => string
+}
 
 type DescribeImport = {
 	name: string,
@@ -17,21 +27,10 @@ type DescribeImport = {
 	importNamed: boolean,
 }
 
-type UserOptions = {
-	provider?: {
-		ssr: DescribeImport,
-		client: DescribeImport
-	}
-}
 
-// TODO: work out how to best get this information to the bundler generation function to include client
-function createImport(props: DescribeImport) {
-	const { name, importFrom, importNamed } = props
-	return importNamed 
-		? `import { ${name} } from "${importFrom}"` 
-		: `import ${name} from "${importFrom}"`
-}
-
+/**
+ * Vite plugin to allow SSR islands
+ */
 export function islands(userOptions: UserOptions = {}): PluginOption {
 
 	let ssrUserConfig: UserConfig, 
@@ -41,10 +40,12 @@ export function islands(userOptions: UserOptions = {}): PluginOption {
 		isSSR: boolean, 
 		manifestFileName: boolean | string
 
+	const provider = userOptions.provider || preactProvider
+
 	const clientIslandImports: ClientIslandImports = new Map()
 
 	// save server in plugin scope to access later in dev mode load step
-	let server: vite.ViteDevServer
+	let server: ViteDevServer
 
 	return [
 		// islands:ssr plugin
@@ -88,12 +89,13 @@ export function islands(userOptions: UserOptions = {}): PluginOption {
 				const ast = astFromCode(code)
 
 				const exported = processIslands(ast, {
-					name: 'ssr',
-					importFrom: 'ssr-tools/hydrate/preact',
-					importNamed: true,
+					name: provider.ssr.name,
+					importFrom: provider.ssr.importFrom,
+					importNamed: provider.ssr.importNamed,
 					pathToSource: id,
 					importId: md5(id)
 				})
+			
 				if (!exported) return
 
 				const clientImport = createClientIslandImport({ 
@@ -114,8 +116,8 @@ export function islands(userOptions: UserOptions = {}): PluginOption {
 			async resolveId(id, _from, options) {
 				// required for import in ssr transform — repositories using `npm link` error with:
 				// [vite]: Rollup failed to resolve import "ssr-tools/hydrate/preact" from "../linked-package/path/to/component.tsx".
-				if (id === 'ssr-tools/hydrate/preact') {
-					return createRequire(import.meta.url).resolve('ssr-tools/hydrate/preact')
+				if (id.startsWith('ssr-tools/')) {
+					return createRequire(import.meta.url).resolve(id)
 				}
 			},
 
@@ -123,7 +125,7 @@ export function islands(userOptions: UserOptions = {}): PluginOption {
 				// build the client bundles (runs in non-dev modes only)
 				// save output in main build manifest using `this.emitFile`
 				const entriesToIslands = getBuildEntriesToIslands(this, clientIslandImports)
-				const { global: globalCode, ...routeCode } = createClientCode(entriesToIslands, clientIslandImports)
+				const { global: globalCode, ...routeCode } = createClientCode(entriesToIslands, clientIslandImports, provider)
 
 				const manifest = await bundleClient(ssrResolvedConfig, ssrUserConfig, globalCode)
 				
@@ -167,7 +169,7 @@ export function islands(userOptions: UserOptions = {}): PluginOption {
 				if (options?.ssr) return
 				if (!id.startsWith('/@islands-dev')) return
 				const entriesToIslands = getDevEntriesToIslands(server, clientIslandImports)
-				const codeOutput = createClientCode(entriesToIslands, clientIslandImports)
+				const codeOutput = createClientCode(entriesToIslands, clientIslandImports, provider)
 				// TODO: for route-specific loading
 				// const routeId = id.slice('/@islands-client:'.length)
 				// return codeOutput[routeId] || codeOutput.global
@@ -179,15 +181,16 @@ export function islands(userOptions: UserOptions = {}): PluginOption {
 
 
 /**
- * Iterates through ModulesInfo references in build mode, and tests to see whether
- * those modules are in the ClientIslandImports map generated in the transform step
+ * Iterates through ModulesInfo references in build mode, and tests 
+ * to see whether those modules are in the ClientIslandImports 
+ * map generated in the transform step
  */
-function getBuildEntriesToIslands(context: vite.Rollup.PluginContext, clientIslandImports: ClientIslandImports): EntriesToIslands {
+function getBuildEntriesToIslands(context: Rollup.PluginContext, clientIslandImports: ClientIslandImports): EntriesToIslands {
 
 	const modules = [...context.getModuleIds()].map(id => context.getModuleInfo(id))	
 	const entryModulesInfo = modules.filter(info => {
 		return info !== null && !info.isExternal && info.isEntry
-	}) as vite.Rollup.ModuleInfo[]
+	}) as Rollup.ModuleInfo[]
 
 	const entriesToIslands: EntriesToIslands = {}
 
@@ -199,8 +202,8 @@ function getBuildEntriesToIslands(context: vite.Rollup.PluginContext, clientIsla
 }
 
 function walkIslandsInModuleInfoMap(
-	context: vite.Rollup.PluginContext,
-	parentNode: vite.Rollup.ModuleInfo, 
+	context: Rollup.PluginContext,
+	parentNode: Rollup.ModuleInfo, 
 	clientIslandImports: ClientIslandImports,
 	islandIds: string[] = [],
 	visited: Record<string, true> = {}
@@ -220,10 +223,11 @@ function walkIslandsInModuleInfoMap(
 
 
 /**
- * Iterates through ModuleGraph in dev mode, and tests to see whether
- * those modules are in the ClientIslandImports map generated in the transform step
+ * Iterates through ModuleGraph in dev mode, and tests 
+ * to see whether those modules are in the ClientIslandImports
+ * map generated in the transform step
  */
-function getDevEntriesToIslands(server: vite.ViteDevServer, clientIslandImports: ClientIslandImports) {
+function getDevEntriesToIslands(server: ViteDevServer, clientIslandImports: ClientIslandImports) {
 
 	const entryNodes = [...server.moduleGraph.idToModuleMap.values()].filter(node => {
 		if (node.type !== 'js') return false
@@ -260,7 +264,8 @@ function walkIslandsInModuleGraph(
 
 
 /**
- * Uses a sub compiler to bundle client code generated from previous ssr processing
+ * Uses a sub compiler to bundle client code 
+ * generated from previous ssr processing
  */
 async function bundleClient(ssrResolvedConfig: ResolvedConfig, ssrUserConfig: UserConfig, clientCode: string) {
 
@@ -314,22 +319,11 @@ async function bundleClient(ssrResolvedConfig: ResolvedConfig, ssrUserConfig: Us
 	return manifest
 }
 
-function createClientCode(entriesToIslands: EntriesToIslands, clientIslandImports: ClientIslandImports) {
+function createClientCode(entriesToIslands: EntriesToIslands, clientIslandImports: ClientIslandImports, provider: Provider) {
 
 	const codeOutput: Record<string, string> = {}
 	const globalImports: Array<string> = []
 	const globalVariables: Array<string> = []
-
-	const bundle = ({ imports, variables }: { imports: Array<string>, variables: Array<string>}) => {
-		return ''
-			+ imports.join("\n") 
-			+ "\n" 
-			+ `import { client as __islandClient } from "ssr-tools/hydrate/preact"` + "\n" 
-			+ `window.__islands = {` + "\n"
-			+ variables.map(variable => `  ${variable}`).join(",\n") + "\n"
-			+ '}' + "\n"
-			+ "__islandClient()"
-	}
 
 	for (const entry in entriesToIslands) {
 		const imports: Array<string> = []
@@ -342,10 +336,9 @@ function createClientCode(entriesToIslands: EntriesToIslands, clientIslandImport
 			variables.push(...islandImport.exportMap.values())
 			globalVariables.push(...islandImport.exportMap.values())
 		})
-		codeOutput[entry] = bundle({ imports, variables })
-	}
-	
-	codeOutput.global = bundle({ imports: globalImports, variables: globalVariables })
+		codeOutput[entry] = provider.bundle({ imports, variables })
+	}	
+	codeOutput.global = provider.bundle({ imports: globalImports, variables: globalVariables })
 	return codeOutput
 }
 
@@ -355,7 +348,7 @@ type CreateImportsOptions = {
 	exported: Array<string>
 }
 
-export function createClientIslandImport({ absPathToFile, exported = [] }: CreateImportsOptions) {
+function createClientIslandImport({ absPathToFile, exported = [] }: CreateImportsOptions) {
 	// we don't want the full absolute path appearing in the source, so we
 	// generate a client friendly id, which is used later in the 
 	// hydration script and client output
