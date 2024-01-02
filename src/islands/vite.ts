@@ -55,9 +55,6 @@ export function islands(userOptions: UserOptions = {}): PluginOption {
 			name: 'islands:ssr',
 			config(config) {
 				ssrUserConfig = config
-				return {
-					build: { emptyOutDir: false }
-				}
 			},
 
 			configResolved(resolvedConfig) {
@@ -289,7 +286,6 @@ async function bundleClient(ssrResolvedConfig: ResolvedConfig, ssrUserConfig: Us
 			manifest: false,
 			ssrManifest: false,
 			ssr: false,
-			emptyOutDir: false,
 			outDir: clientOutDir,
 			rollupOptions: {
 				...(ssrUserConfig?.build?.rollupOptions || {}),
