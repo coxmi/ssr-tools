@@ -1,6 +1,6 @@
 {
   "name": "ssr-tools",
-  "version": "0.0.7",
+  "version": "0.0.8",
   "description": "A collection of tools to use in SSR rendering",
   "license": "MIT",
   "author": "Michael Cox",
@@ -20,7 +20,7 @@
   ],
   "type": "module",
   "exports": {
-  	"./islands": "./dist/islands/index.mjs",
+    "./islands": "./dist/islands/index.mjs",
     "./islands/vite": "./dist/islands/vite.mjs",
     "./islands/preact": "./dist/islands/providers/preact/index.mjs",
     "./islands/preact/client": "./dist/islands/providers/preact/client.mjs",
