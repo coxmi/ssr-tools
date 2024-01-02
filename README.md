@@ -19,8 +19,8 @@ defineConfig({
         islands()
     ],
     build: {
-    	ssr: true 
-	}
+        ssr: true 
+    }
 })
 ```
 
