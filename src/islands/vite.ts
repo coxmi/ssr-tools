@@ -269,7 +269,7 @@ function walkIslandsInModuleGraph(
  */
 async function bundleClient(ssrResolvedConfig: ResolvedConfig, ssrUserConfig: UserConfig, clientCode: string) {
 
-	const clientVirtualId = '/@islands-client-bundle'
+	const clientVirtualId = '/islands-client'
 
 	const ssrPlugins = ssrUserConfig?.plugins || []
 	const clientPlugins = (ssrPlugins.flat() as vite.Plugin[]).filter(
