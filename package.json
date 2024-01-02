@@ -20,6 +20,7 @@
   ],
   "type": "module",
   "exports": {
+  	"./islands": "./dist/islands/index.mjs",
     "./islands/vite": "./dist/islands/vite.mjs",
     "./islands/preact": "./dist/islands/providers/preact/index.mjs",
     "./islands/preact/client": "./dist/islands/providers/preact/client.mjs",

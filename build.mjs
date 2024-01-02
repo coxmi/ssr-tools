@@ -5,6 +5,7 @@ let dev = process.argv[2] === '--dev'
 const base = {
 	entryPoints: [
 		'src/file-router/index.ts',
+		'src/islands/index.ts',
 		'src/islands/vite.ts',
 		'src/islands/providers/preact/index.ts',
 		'src/islands/providers/preact/ssr.tsx',
