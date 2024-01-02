@@ -1,6 +1,9 @@
 import { Parser } from 'acorn'
+/* @ts-ignore */
 import astringJSX from '@barelyhuman/astring-jsx'
 import jsx from 'acorn-jsx'
+
+/* @ts-ignore */
 import { extend as jsxWalk } from 'acorn-jsx-walk'
 import * as walk from 'acorn-walk'
 

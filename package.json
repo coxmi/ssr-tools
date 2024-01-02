@@ -32,8 +32,9 @@
   ],
   "scripts": {
     "dev": "node build.mjs --dev",
-    "build": "node build.mjs",
-    "test": "jest"
+    "build": "rm -rf dist && node build.mjs",
+    "test": "tsc --noEmit && jest",
+    "deploy": "npm version patch && npm publish"
   },
   "peerDependencies": {
     "preact": "^10",

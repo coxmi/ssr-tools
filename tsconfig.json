@@ -1,9 +1,11 @@
 {
   "include": [
-  	"src/file-router/index.ts",
-  	"src/hydrate/preact.ts",
-  	"src/islands/index.ts",
-  	"src/islands/vite.ts",
+	"src/*",
+	"src/islands/index.ts",
+	"src/islands/vite.ts",
+	"src/islands/providers/preact/index.ts",
+	"src/islands/providers/preact/ssr.tsx",
+	"src/islands/providers/preact/client.tsx"
   ],
   "outDir": "dist",
   "compilerOptions": {
@@ -17,8 +19,7 @@
   	"module": "es2020",
   	"jsx": "react-jsx",
 	"jsxImportSource": "preact",
-	"noEmit": true,
-    "emitDeclarationOnly": false,
+    "emitDeclarationOnly": true,
     "moduleResolution": "node",
     "esModuleInterop": true,
     "skipLibCheck": true,
