@@ -25,7 +25,8 @@
     "./islands/preact": "./dist/islands/providers/preact/index.mjs",
     "./islands/preact/client": "./dist/islands/providers/preact/client.mjs",
     "./islands/preact/ssr": "./dist/islands/providers/preact/ssr.mjs",
-    "./file-router": "./dist/file-router/index.mjs"
+    "./file-router": "./dist/file-router/routes.mjs",
+    "./file-router/vite": "./dist/file-router/vite.mjs"
   },
   "files": [
     "dist"
@@ -48,9 +49,11 @@
     "acorn-jsx": "^5.3.2",
     "acorn-jsx-walk": "^2.0.0",
     "acorn-walk": "^8.3.0",
+    "fast-glob": "^3.3.2",
     "glob-to-regexp": "^0.4.1",
     "path-to-regexp": "^6.2.1",
-    "recast": "^0.23.4"
+    "recast": "^0.23.4",
+    "serve-static": "^1.15.0"
   },
   "devDependencies": {
     "@types/glob-to-regexp": "^0.4.4",

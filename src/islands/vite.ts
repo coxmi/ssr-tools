@@ -5,7 +5,7 @@ import * as vite from 'vite'
 import * as recast from 'recast'
 import { processIslands } from './index.ts'
 import { astFromCode } from './ast.ts'
-import { md5 } from './../utility/crypto.ts'
+import { sha } from './../utility/crypto.ts'
 import type { PluginOption, UserConfig, ResolvedConfig, ViteDevServer, Rollup } from 'vite'
 import preactProvider from './providers/preact/index.ts'
 
@@ -65,7 +65,6 @@ export function islands(userOptions: UserOptions = {}): PluginOption {
 				isSSR = !!resolvedConfig?.build.ssr
 				absRoot = resolvedConfig.root
 				manifestFileName = resolvedConfig?.build.manifest
-				// console.log({ isBuild, isSSR, mode, command, opts: resolvedConfig.build?.rollupOptions?.input })
 			},
 
 			async transform(code, id, options) {
@@ -90,7 +89,7 @@ export function islands(userOptions: UserOptions = {}): PluginOption {
 					importFrom: provider.ssr.importFrom,
 					importNamed: provider.ssr.importNamed,
 					pathToSource: id,
-					importId: md5(id)
+					importId: sha(id)
 				})
 			
 				if (!exported) return
@@ -168,7 +167,7 @@ export function islands(userOptions: UserOptions = {}): PluginOption {
 				const entriesToIslands = getDevEntriesToIslands(server, clientIslandImports)
 				const codeOutput = createClientCode(entriesToIslands, clientIslandImports, provider)
 				// TODO: for route-specific loading
-				// const routeId = id.slice('/@islands-client:'.length)
+				// const routeId = id.slice('/@islands-dev:'.length)
 				// return codeOutput[routeId] || codeOutput.global
 				return codeOutput.global
 			},
@@ -348,7 +347,7 @@ function createClientIslandImport({ absPathToFile, exported = [] }: CreateImport
 	// we don't want the full absolute path appearing in the source, so we
 	// generate a client friendly id, which is used later in the 
 	// hydration script and client output
-	const suffix = '_' + md5(absPathToFile)
+	const suffix = '_' + sha(absPathToFile)
 	const variables: Array<string> = []
 	const exportMap: Map<string, string> = new Map()
 
