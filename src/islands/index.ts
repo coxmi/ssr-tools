@@ -43,7 +43,7 @@ type FunctionParts = {
  * Gets a Statement array and returned Expression from:
  * function, class declarations, arrow functions
  */
-function functionParts(nodeAST: FunctionNodes): FunctionParts {
+function functionParts(nodeAST: FunctionNodes): FunctionParts|false {
 
 	const empty = {
 		fnBody: null,
@@ -94,7 +94,6 @@ function functionParts(nodeAST: FunctionNodes): FunctionParts {
 				returnExpression: nodeAST.body
 			}
 		}
-		throw new Error(`functionParts cannot deal with arrow function body of type: ${nodeAST.body.type}`)
 	}
 
 	function findReturnExpression(fnBlock: Statement[]) {
@@ -103,7 +102,7 @@ function functionParts(nodeAST: FunctionNodes): FunctionParts {
 		return null
 	}
 
-	throw new Error(`isNodeIsland cannot deal with type: ${nodeAST.type}`)
+	return false
 }
 
 
@@ -113,8 +112,10 @@ function functionParts(nodeAST: FunctionNodes): FunctionParts {
  */
 function isNodeIsland(nodeAST: FunctionNodes) {
 
-	const { fnBody, returnExpression } = functionParts(nodeAST)
-
+	const parts = functionParts(nodeAST)
+	if (!parts) return false
+	
+	const { fnBody, returnExpression } = parts
 	if (!returnExpression) return false
 
 	// test for untransformed JSX as return type

@@ -6,6 +6,7 @@ import type { PluginOption, UserConfig, ResolvedConfig, ViteDevServer, ModuleNod
 import { isObject } from './../utility/object.ts'
 import glob from 'fast-glob'
 import { buildRoutes, matchRoute } from './routes.ts'
+import { addToHead, addToBody } from './html.ts'
 
 type UserOptions = {
 	dir: string,
@@ -17,7 +18,6 @@ type SettingsFromConfig = ReturnType<typeof settingsFromConfig>
 
 /**
  * Vite plugin to allow file-router in dev mode
- * TODO: In production use `import { fileRouterMiddleware } from 'ssr-tools/file-router/vite'`
  */
 export function fileRouter(opts: UserOptions): PluginOption {
 
@@ -45,6 +45,25 @@ export function fileRouter(opts: UserOptions): PluginOption {
 			settings: () => settings,
 		},
 
+		config(config) {
+			// add all matching glob files to rollupOptions
+			const root = config.root || process.cwd()
+			const routerDirAbsolute = toAbsolutePath(userOptions.dir, root)
+			const routerGlobAbsolute = toAbsolutePath(userOptions.glob, routerDirAbsolute)
+			return {
+				build: {
+					rollupOptions: {
+						input: glob.sync(routerGlobAbsolute),
+						// specify chunks and entry names, otherwise vite puts them into 'assets'
+						output: {
+							entryFileNames: "routes/[name].js",
+							chunkFileNames: "routes/chunks/[name]-[hash].js",
+						}
+					},
+				}
+			}
+		},
+
 		configResolved(resolvedConfig) {
 			settings = settingsFromConfig(resolvedConfig, userOptions)
 		},
@@ -68,66 +87,49 @@ export function fileRouter(opts: UserOptions): PluginOption {
 					"type": "text/css",
 					"data-vite-dev-id": style.id
 				},
-				children: style.css,
-				injectTo: 'body'
+				children: "\n" + style.css + "\n",
+				injectTo: 'head'
 			}))
 		},
 
 		configureServer(server) {
-		    // returns a post hook that is called after 
-		    // internal middlewares are installed
-		    return () => {
-		    	server.watcher.add([
-		    		settings.routerDirAbsolute, 
-		    		settings.routerGlobAbsolute
-		    	])
 
-		    	if (userOptions.removeTrailingSlash) {
-		    		server.middlewares.use(middlewareRemoveTrailingSlash)
-		    	}
+	    	server.watcher.add([
+	    		settings.routerDirAbsolute, 
+	    		settings.routerGlobAbsolute
+	    	])
 
-				server.middlewares.use(async (req, res, next) => {
-					const url = req.originalUrl
-					if (typeof url !== 'string') return next()
-					const importSource = devFindRoute(settings, url)
-					if (typeof importSource !== 'string') return next()
+	    	if (userOptions.removeTrailingSlash) {
+	    		server.middlewares.use(middlewareRemoveTrailingSlash)
+	    	}
 
-					const handler = (await server.ssrLoadModule(importSource)).default
+			server.middlewares.use(async (req, res, next) => {
+				const url = req.originalUrl
+				if (typeof url !== 'string') return next()
+				
+				const importSource = devFindRoute(settings, url)
+				if (typeof importSource !== 'string') return next()
 
-					// TODO: parse and execute based on a pattern
-					// e.g. native Response object, preact component default
-					const result = await handler(req, res)
+				const handler = (await server.ssrLoadModule(importSource)).default
 
-					// in dev, allow hmr and plugins to edit output
-					const html = await server.transformIndexHtml(url, result)
+				// TODO: parse and execute based on a pattern
+				// e.g. native Response object, preact component default
+				const result = await handler(req, res)
 
-					return res.end(html)
-				})
-		    }
+				// in dev, allow hmr and plugins to edit output
+				const html = await server.transformIndexHtml(url, result)
+
+				if (res.writableEnded) return next()
+				res.setHeader('Content-Type', 'text/html')
+				return res.end(html)
+			})
 		  },
 	}
 }
 
-function devFindRoute(settings: SettingsFromConfig, url: string) {
-	const availableRoutes = buildRoutes({
-		dir: settings.routerDirAbsolute,
-		files: glob.sync(settings.routerGlobAbsolute),
-		root: settings.root,
-	})
-	if (!availableRoutes.length) return null
-	
-	const matched = matchRoute(url, availableRoutes)
-	if (!matched) return null
-
-	const filepathRelative = matched.component.startsWith('/') 
-		? matched.component.slice(1)
-		: matched.component
-
-	const importSource = path.join(settings.root, filepathRelative)
-	return importSource
-}
-
-
+/**
+ * Middleware that initialises the file router with settings from vite plugin
+ */
 export async function fileRouterMiddleware(configPathOrFolder: string = '') {
 
 	const configFile = findConfigFile(configPathOrFolder)
@@ -152,7 +154,9 @@ export async function fileRouterMiddleware(configPathOrFolder: string = '') {
 	})
 
 	const main = async (req, res, next) => {
+
 		const url = req.originalUrl
+		
 		if (typeof url !== 'string') return next()
 		
 		const matched = matchRoute(url, availableRoutes)
@@ -168,26 +172,29 @@ export async function fileRouterMiddleware(configPathOrFolder: string = '') {
 		const importBuilt = path.join(settings.outDirAbsolute, fileinfo.file)
 		const handler = (await import(importBuilt)).default
 
-		// TODO: revisit style inclusion so it's the same in dev and build modes
-		// add stylesheets to context in response locals
-		{
-			const scripts = []
-			const stylesheets = []
-			if (manifest['style.css']) {
-				stylesheets.push('/' + manifest['style.css'].file)
-			}
-
-			if (manifest['islands-client.js']) {
-				scripts.push({ type: 'module', src: '/' + manifest['islands-client.js'].file })
-			}
-
-			res.locals.stylesheets = stylesheets
-			res.locals.scripts = scripts
-		}
 		// TODO: parse and execute based on a pattern
 		// e.g. native Response object, preact component default
-		const result = await handler(req, res)
-		return res.send(result)
+		let html = await handler(req, res)
+
+		// add scripts and styles to result from manifest
+		const stylesheets = []
+		if (manifest['style.css']) {
+			const src = '/' + manifest['style.css'].file
+			stylesheets.push(`<link rel="stylesheet" href="${src}">`)
+		}
+
+		const scripts = []
+		if (manifest['islands-client.js']) {
+			const src = '/' + manifest['islands-client.js'].file
+			scripts.push(`<script src="${src}"></script>`)
+		}
+
+		if (stylesheets.length) html = addToHead(html, stylesheets)
+		if (scripts.length) html = addToBody(html, scripts)
+
+		if (res.writableEnded) return next()
+		res.setHeader('Content-Type', 'text/html')
+		return res.end(html)
 	}
 
 	const preMiddlewares = []
@@ -211,7 +218,7 @@ export function settingsFromConfig(config: ResolvedConfig, userOptions: UserOpti
 	
 	let manifest = config?.build?.manifest
 	let manifestFileName: string = ''
-	if (manifest && typeof manifest === 'boolean') manifestFileName = 'manifest.json'
+	if (manifest && typeof manifest === 'boolean') manifestFileName = '.vite/manifest.json'
 	if (manifest && typeof manifest === 'string') manifestFileName = manifest
 
 	const manifestPathAbsolute = manifestFileName
@@ -228,6 +235,27 @@ export function settingsFromConfig(config: ResolvedConfig, userOptions: UserOpti
 	}
 }
 
+
+function devFindRoute(settings: SettingsFromConfig, url: string) {
+	const availableRoutes = buildRoutes({
+		dir: settings.routerDirAbsolute,
+		files: glob.sync(settings.routerGlobAbsolute),
+		root: settings.root,
+	})
+	if (!availableRoutes.length) return null
+	
+	const matched = matchRoute(url, availableRoutes)
+	if (!matched) return null
+
+	const filepathRelative = matched.component.startsWith('/') 
+		? matched.component.slice(1)
+		: matched.component
+
+	const importSource = path.join(settings.root, filepathRelative)
+	return importSource
+}
+
+
 type CSS = { id: string, css: string }
 
 // adapted from https://github.com/vitejs/vite/issues/2282
@@ -236,8 +264,7 @@ function devCollectStyles(modules: Set<ModuleNode>, styles: Record<string, CSS> 
 		const isCss = mod.ssrModule && (
 			mod.file?.endsWith(".css") ||
 			mod.file?.endsWith(".scss") ||
-        	mod.file?.endsWith(".less") ||
-        	mod.id?.includes("vue&type=style")
+        	mod.file?.endsWith(".less")
         )
 		
 		if (isCss && mod.ssrModule?.default) {
@@ -285,6 +312,7 @@ function findConfigFile(configPathOrFolder: string = process.cwd()) {
 
 function middlewareRemoveTrailingSlash(req, res, next) {
 	const url = parseUrl(req.originalUrl)
+	if (url.pathname === '/') return next()
 	if (url.pathname && url.pathname.slice(-1) === '/') {
 		const query = url.search || ''
 		const safepath = url.pathname.slice(0, -1).replace(/\/+/g, '/')
@@ -306,9 +334,9 @@ function toAbsolutePath(to: string, from: string = process.cwd()): string {
 /**
  * Combine multiple middleware together.
  *
- * @param {Function[]} middlewares functions of form:
+ * @param middlewares functions of form:
  *   function(req, res, next) { ... }
- * @return {Function} single combined middleware
+ * @return single combined middleware
  */
 function combineMiddleware(middlewares: Array<(...arg: any[]) => any>) {
 	// taken from https://stackoverflow.com/a/32640935

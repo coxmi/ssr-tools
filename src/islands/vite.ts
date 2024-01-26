@@ -109,7 +109,7 @@ export function islands(userOptions: UserOptions = {}): PluginOption {
 				return { code: processed, map }
 			},
 
-			async resolveId(id, _from, options) {
+			async resolveId(id, _from, _options) {
 				// required for import in ssr transform — repositories using `npm link` error with:
 				// [vite]: Rollup failed to resolve import "ssr-tools/hydrate/preact" from "../linked-package/path/to/component.tsx".
 				if (id.startsWith('ssr-tools/')) {
@@ -268,9 +268,9 @@ async function bundleClient(ssrResolvedConfig: ResolvedConfig, ssrUserConfig: Us
 	const clientVirtualId = '/islands-client'
 
 	const ssrPlugins = ssrUserConfig?.plugins || []
-	const clientPlugins = (ssrPlugins.flat() as vite.Plugin[]).filter(
-		plugin => plugin && plugin.name && !plugin.name.startsWith('islands:')
-	)
+	const clientPlugins = (ssrPlugins.flat() as vite.Plugin[])
+		.filter(plugin => plugin && plugin.name && !plugin?.name?.startsWith('islands:'))
+		.filter(plugin => plugin && plugin.name && plugin.name !== 'file-router')
 
 	const { root } = ssrResolvedConfig
 	const clientOutDir = join(ssrResolvedConfig.build.outDir, '../.islands')
@@ -289,6 +289,7 @@ async function bundleClient(ssrResolvedConfig: ResolvedConfig, ssrUserConfig: Us
 			rollupOptions: {
 				...(ssrUserConfig?.build?.rollupOptions || {}),
 				input: [clientVirtualId],
+				output: {}
 			}
 		},
 		plugins: [
@@ -323,17 +324,24 @@ function createClientCode(entriesToIslands: EntriesToIslands, clientIslandImport
 	for (const entry in entriesToIslands) {
 		const imports: Array<string> = []
 		const variables: Array<string> = []
+
 		entriesToIslands[entry].forEach(island => {
 			const islandImport = clientIslandImports.get(island)
 			if (!islandImport) return
+
 			imports.push(...islandImport.code)
-			globalImports.push(...islandImport.code)
 			variables.push(...islandImport.exportMap.values())
+
+			globalImports.push(...islandImport.code)
 			globalVariables.push(...islandImport.exportMap.values())
 		})
 		codeOutput[entry] = provider.bundle({ imports, variables })
 	}	
-	codeOutput.global = provider.bundle({ imports: globalImports, variables: globalVariables })
+	codeOutput.global = provider.bundle({ 
+		imports: [...new Set(globalImports)], 
+		variables: [...new Set(globalVariables)] 
+	})
+
 	return codeOutput
 }
 
