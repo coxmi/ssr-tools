@@ -39,7 +39,7 @@
   },
   "peerDependencies": {
     "preact": "^10",
-    "vite": "^4"
+    "vite": "^5"
   },
   "dependencies": {
     "@babel/generator": "^7.23.4",
