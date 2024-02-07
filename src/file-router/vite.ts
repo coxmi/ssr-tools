@@ -2,11 +2,12 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { parse as parseUrl } from 'node:url'
 import { resolveConfig } from 'vite'
-import type { PluginOption, UserConfig, ResolvedConfig, ViteDevServer, ModuleNode } from 'vite'
-import { isObject } from './../utility/object.ts'
 import glob from 'fast-glob'
+import { isObject } from './../utility/object.ts'
 import { buildRoutes, matchRoute } from './routes.ts'
 import { addToHead, addToBody } from './html.ts'
+
+import type { PluginOption, UserConfig, ResolvedConfig, ViteDevServer, ModuleNode } from 'vite'
 
 type UserOptions = {
 	dir: string,

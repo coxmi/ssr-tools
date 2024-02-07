@@ -10,15 +10,15 @@ function addIndent(indent = '') {
 }
 
 
-export function addToHead(html: string, tags: string[]): string {	
+export function addToHead(html: string, tags: string[]): string {
 	if (!tags.length) return html
-	
+
 	if (headInjectRegex.test(html)) {
 		// indent of opening <head> tag
-		const indent1 = html.match(headIndent)[1] || ''
-		const indent2 = addIndent(addIndent)
+		const indent1 = (html.match(headIndent) || [])[1] || ''
+		const indent2 = addIndent(indent1)
 
-		return html.replace(headInjectRegex, (match) => {
+		return html.replace(headInjectRegex, () => {
 			return indent1 + tags.join(`\n${indent2}`) + `\n${indent1}</head>`
 		})
 	}
