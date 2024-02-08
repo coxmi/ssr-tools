@@ -309,12 +309,15 @@ export function bundlePlugin(): Plugin[] {
 		    	server = _server
 		    },
 
-			transformIndexHtml() {
+			transformIndexHtml(html, ctx) {
 				// add script to the html output in dev mode
 				return Object.values(bundles).map(bundle => ({
 					tag: 'script', 
 					attrs: { 
-						src: bundle.devName, 
+						// add cache busting per-route:
+						// the script would otherwise be cached on the initial
+						// route in dev mode
+						src: `${bundle.devName}?v=${sha(ctx.path)}`, 
 						type: 'module' 
 					}, 
 					injectTo: 'body' 
