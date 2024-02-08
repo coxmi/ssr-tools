@@ -11,7 +11,7 @@ Some tools to use in SSR-rendered apps, designed primarily around preact islands
 
 ```js
 import preact from '@preact/preset-vite'
-import { islands } from 'ssr-tools/islands/vite'
+import { islands } from 'ssr-tools/vite/islands'
 
 defineConfig({
     plugins: [

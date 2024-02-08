@@ -20,13 +20,41 @@
   ],
   "type": "module",
   "exports": {
-    "./islands": "./dist/islands/index.mjs",
-    "./islands/vite": "./dist/islands/vite.mjs",
-    "./islands/preact": "./dist/islands/providers/preact/index.mjs",
-    "./islands/preact/client": "./dist/islands/providers/preact/client.mjs",
-    "./islands/preact/ssr": "./dist/islands/providers/preact/ssr.mjs",
-    "./file-router": "./dist/file-router/routes.mjs",
-    "./file-router/vite": "./dist/file-router/vite.mjs"
+  	"./file-router": {
+  		"import": "./dist/file-router/routes.mjs",
+  		"require": "./dist/file-router/routes.mjs",
+  		"types": "./dist/file-router/routes.d.ts"
+  	},
+  	"./file-router/vite": {
+  		"import": "./dist/file-router/vite.mjs",
+  		"require": "./dist/file-router/vite.mjs",
+  		"types": "./dist/file-router/vite.d.ts"
+  	},
+    "./vite/islands": {
+    	"import": "./dist/vite/islands.mjs",
+    	"require": "./dist/vite/islands.mjs",
+    	"types": "./dist/vite/islands.d.ts"
+	},
+    "./islands": {
+    	"import": "./dist/islands/index.mjs",
+    	"require": "./dist/islands/index.mjs",
+    	"types": "./dist/islands/index.d.ts"
+    },
+    "./islands/preact": {
+    	"import": "./dist/islands/providers/preact/index.mjs",
+    	"require": "./dist/islands/providers/preact/index.mjs",
+    	"types": "./dist/islands/providers/preact/index.d.ts"
+    },
+    "./islands/preact/client": {
+    	"import": "./dist/islands/providers/preact/client.mjs",
+    	"require": "./dist/islands/providers/preact/client.mjs",
+    	"types": "./dist/islands/providers/preact/client.d.ts"
+    },
+    "./islands/preact/ssr": {
+    	"import": "./dist/islands/providers/preact/ssr.mjs",
+    	"require": "./dist/islands/providers/preact/ssr.mjs",
+    	"types": "./dist/islands/providers/preact/ssr.d.ts"
+    }
   },
   "files": [
     "dist"

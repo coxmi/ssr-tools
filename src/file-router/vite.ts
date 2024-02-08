@@ -18,7 +18,7 @@ type UserOptions = {
 type SettingsFromConfig = ReturnType<typeof settingsFromConfig>
 
 /**
- * Vite plugin to allow file-router in dev mode
+ * Vite plugin to allow ssr-tools:file-router in dev mode
  */
 export function fileRouter(opts: UserOptions): PluginOption {
 
@@ -39,7 +39,7 @@ export function fileRouter(opts: UserOptions): PluginOption {
 	}
 
 	return {
-		name: 'file-router',
+		name: 'ssr-tools:file-router',
 
 		api: {
 			userOptions: () => userOptions,
@@ -138,8 +138,8 @@ export async function fileRouterMiddleware(configPathOrFolder: string = '') {
 		configFile: configFile
 	})
 
-	const plugin = viteConfig.plugins.find(plugin => plugin.name === 'file-router')?.api
-	if (!plugin) throw new Error(`No file-router plugin found — please add to your vite config`)
+	const plugin = viteConfig.plugins.find(plugin => plugin.name === 'ssr-tools:file-router')?.api
+	if (!plugin) throw new Error(`No ssr-tools:file-router plugin found — please add to your vite config`)
 
 	const userOptions = plugin.userOptions()
 

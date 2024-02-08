@@ -6,11 +6,12 @@ const provider: Provider = {
 		importFrom: 'ssr-tools/islands/preact/ssr',
 		importNamed: true
 	},
-	bundle({ imports, variables }) {
+	bundle({ imports, variables, code }) {
 		return ''
 			+ imports.join("\n") 
 			+ "\n" 
 			+ `import { client as preactIslandClient } from "ssr-tools/islands/preact/client"` + "\n" 
+			+ code.join("\n") + "\n"
 			+ `preactIslandClient({` + "\n"
 				+ variables.map(variable => `  ${variable}`).join(",\n") + "\n"
 			+ '})'
