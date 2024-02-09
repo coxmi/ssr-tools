@@ -1,9 +1,7 @@
-import fs from 'node:fs'
-import { resolve, join } from 'node:path'
 import { createRequire } from 'node:module'
 import { sha } from './../utility/crypto.ts'
 import { isKebabCase } from '../utility/string.ts'
-import * as vite from 'vite'
+import { clientCompiler } from './clientCompiler.ts'
 
 import type { Plugin, UserConfig, ResolvedConfig, ViteDevServer, Rollup, ModuleNode } from 'vite'
 
@@ -280,7 +278,7 @@ export function bundlePlugin(): Plugin[] {
 						...routeCode 
 					} = createClientCode(entriesToImports, bundle)
 
-					const manifest = await bundleClient(bundle, ssrResolvedConfig, ssrUserConfig, globalCode)
+					const manifest = await clientCompiler(bundle.name, ssrResolvedConfig, ssrUserConfig, globalCode)
 					if (!('output' in manifest)) return
 
 					manifest.output.map(file => {
@@ -314,11 +312,12 @@ export function bundlePlugin(): Plugin[] {
 				return Object.values(bundles).map(bundle => ({
 					tag: 'script', 
 					attrs: { 
+						type: 'module',
 						// add cache busting per-route:
 						// the script would otherwise be cached on the initial
 						// route in dev mode
-						src: `${bundle.devName}?v=${sha(ctx.path)}`, 
-						type: 'module' 
+						src: `${bundle.devName}?v=${sha(ctx.path)}`
+						
 					}, 
 					injectTo: 'body' 
 				}))
@@ -344,60 +343,4 @@ export function findBundleApi(config: ResolvedConfig): BundlePublicAPI | never {
 	const api = config.plugins.find(plugin => plugin?.name === 'ssr-tools:bundle')?.api
 	if (!api) throw new Error("No bundle API found")
 	return api
-}
-
-
-/**
- * Used in build mode only.
- * Uses a sub compiler to bundle client code, with initial config in main SSR compilation
- */
-async function bundleClient(bundle: ClientBundle, ssrResolvedConfig: ResolvedConfig, ssrUserConfig: UserConfig, clientCode: string) {
-
-	const clientVirtualId = `/${bundle.name}`
-
-	const ssrPlugins = ssrUserConfig?.plugins || []
-	const clientPlugins = (ssrPlugins.flat() as Plugin[])
-		.filter(plugin => plugin && plugin.name && !plugin?.name?.startsWith('ssr-tools:'))
-
-	const { root } = ssrResolvedConfig
-	const clientOutDir = join(ssrResolvedConfig.build.outDir, `../.${bundle.name}`)
-	const absClientOutDir = resolve(root, clientOutDir)
-
-	const manifest = await vite.build({
-		...ssrUserConfig,
-		configFile: false,
-		envFile: false,
-		build: {
-			...(ssrUserConfig?.build || {}),
-			manifest: false,
-			ssrManifest: false,
-			ssr: false,
-			outDir: clientOutDir,
-			rollupOptions: {
-				...(ssrUserConfig?.build?.rollupOptions || {}),
-				input: [clientVirtualId],
-				output: {}
-			}
-		},
-		plugins: [
-			...clientPlugins,
-			{
-				name: 'ssr-tools:client-bundle',
-				enforce: 'pre',
-				resolveId(id) {
-					if (id === clientVirtualId) return clientVirtualId
-				},
-				load(id) {
-					if (id === clientVirtualId) {
-						return clientCode
-					}
-				}
-			},
-		],
-		logLevel: 'silent'
-	})
-
-	// delete dir and return manifest to allow main plugin to emit the files
-	fs.rmSync(absClientOutDir, { recursive: true, force: true })
-	return manifest
 }

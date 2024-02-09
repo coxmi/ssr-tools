@@ -6,6 +6,7 @@ import glob from 'fast-glob'
 import { isObject } from './../utility/object.ts'
 import { buildRoutes, matchRoute } from './routes.ts'
 import { addToHead, addToBody } from './html.ts'
+import { sha } from './../utility/crypto.ts'
 
 import type { PluginOption, UserConfig, ResolvedConfig, ViteDevServer, ModuleNode } from 'vite'
 
@@ -37,6 +38,8 @@ export function fileRouter(opts: UserOptions): PluginOption {
 		...defaults, 
 		...(isObject(opts) ? opts : {}) 
 	}
+
+	const stylesheets = new Map<string, CSS[]>()
 
 	return {
 		name: 'ssr-tools:file-router',
@@ -74,23 +77,61 @@ export function fileRouter(opts: UserOptions): PluginOption {
 		 */
 		transformIndexHtml(html, ctx) {
 			if (!ctx.server) return
-			
+
 			const importSource = devFindRoute(settings, ctx.path)
 			if (typeof importSource !== 'string') return
 
 			const importedModules = ctx.server.moduleGraph.getModulesByFile(importSource)
 			if (!importedModules) return
 
-			const styles = devCollectStyles(importedModules)
-			return styles.map(style => ({
-				tag: 'style',
-				attrs: { 
-					"type": "text/css",
-					"data-vite-dev-id": style.id
+			// save stylesheets indexed per route for use in load hook
+			const id = sha(ctx.path)
+			const css = devCollectStyles(importedModules)			
+			stylesheets.set(id, css)
+
+			return [
+				// remove the FOUC caused by vite applying styles after js initialisation
+				{
+					tag: 'script',
+					attrs: {
+						type: 'module',
+						src: `/@file-router-styles-dev?v=${id}`,
+					},
+					injectTo: 'body'
 				},
-				children: "\n" + style.css + "\n",
-				injectTo: 'head'
-			}))
+				// returns js imports, so vite handles css hmr as standard
+				{
+					tag: 'link',
+					attrs: {
+						rel: 'stylesheet',
+						href: `/@file-router-styles.css?v=${id}`,
+					},
+					injectTo: 'head'
+				},
+
+			]
+		},
+
+		load(id, options) {
+			if (options?.ssr) return
+			const getStylesheets = (id: string) => {
+				const sha = new URLSearchParams(id.split('?').pop()).get('v') || ''
+				return stylesheets.get(sha) || []
+			}
+			if (id.startsWith('/@file-router-styles-dev?')) {
+				return getStylesheets(id)
+					.map(sheet => `import "${sheet.file}"`)
+					.join('\n')
+					+ `
+					if (import.meta.hot) {
+						const initial = document.querySelector('link[href^="/@file-router-styles.css"]')
+						initial.remove()
+					}
+					`.replaceAll(/^\t{5}/gm, '')
+			}
+			if (id.startsWith('/@file-router-styles.css?')) {
+				return getStylesheets(id).map(sheet => sheet.css).join('\n')
+			}
 		},
 
 		configureServer(server) {
@@ -257,7 +298,7 @@ function devFindRoute(settings: SettingsFromConfig, url: string) {
 }
 
 
-type CSS = { id: string, css: string }
+type CSS = { id: string, file: string, css: string }
 
 // adapted from https://github.com/vitejs/vite/issues/2282
 function devCollectStyles(modules: Set<ModuleNode>, styles: Record<string, CSS> = {}, checkedComponents = new Set()) {
@@ -271,6 +312,7 @@ function devCollectStyles(modules: Set<ModuleNode>, styles: Record<string, CSS> 
 		if (isCss && mod.ssrModule?.default) {
       		styles[mod.url] = {
       			id: mod.url,
+      			file: mod.file || '',
       			css: mod.ssrModule?.default
       		}
     	}
