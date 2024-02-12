@@ -219,10 +219,6 @@ function createClientCode(entriesToImports: EntriesToClientImports, bundle: Clie
 }
 
 
-// allow this plugin to be a dependency of multiple plugins
-let shouldInitialisePlugin: boolean = true
-
-
 export function bundlePlugin(): Plugin[] {
 
 	const bundles: Record<string, ClientBundle> = {}
@@ -231,35 +227,33 @@ export function bundlePlugin(): Plugin[] {
 	let ssrResolvedConfig: ResolvedConfig
 	let server: ViteDevServer
 
-	// only initialize once per server start
-	if (!shouldInitialisePlugin) return []
-	shouldInitialisePlugin = false
+	const api = (bundleName: string): ClientBundle => {
+		if (bundles[bundleName]) return bundles[bundleName]
+		return bundles[bundleName] = new ClientBundle(bundleName)
+	}
+
+	// allow this plugin to be a dependency of multiple plugins
+	// only run hooks when it's been initiated by a call to findBundleApi()
+	let initiated = false
+	api.initiate = () => initiated = true
+	api.state = () => initiated
 
 	return [
 		{
 			name: 'ssr-tools:bundle',
 			enforce: 'pre',
+			api,
 
 			config(config) {
 				ssrUserConfig = config
 			},
 
-			configResolved(resolvedConfig) {
+			configResolved: function(resolvedConfig) {
 				ssrResolvedConfig = resolvedConfig
 			},
 
-			configureServer() {
-	    		// after it's started up, allow the server to restart 
-	    		// with a new plugin instance
-	    		shouldInitialisePlugin = true
-		    },
-
-			api(bundleName: string): ClientBundle {
-				if (bundles[bundleName]) return bundles[bundleName]
-				return bundles[bundleName] = new ClientBundle(bundleName)
-			},
-
 			async resolveId(id, _from, _options) {
+				if (!initiated) return
 				// resolve ssr-tools relative to the main project, otherwise repositories using `npm link` error with:
 				// [vite]: Rollup failed to resolve import "ssr-tools/…" from "../linked-package/path/to/component.tsx".
 				if (id.startsWith('ssr-tools/')) {
@@ -268,6 +262,7 @@ export function bundlePlugin(): Plugin[] {
 			},
 
 			async buildEnd() {
+				if (!initiated) return
 				// build the client bundles (runs in non-dev modes only)
 				// save output in main build manifest using `this.emitFile`
 				const pluginContext = this
@@ -308,11 +303,14 @@ export function bundlePlugin(): Plugin[] {
 		},
 		{
 			name: 'ssr-tools:bundle-dev',
+			api,
 			configureServer(_server) {
+				if (!initiated) return
 		    	server = _server
 		    },
 
 			transformIndexHtml(html, ctx) {
+				if (!initiated) return
 				// add script to the html output in dev mode
 				return Object.values(bundles).map(bundle => ({
 					tag: 'script', 
@@ -329,6 +327,7 @@ export function bundlePlugin(): Plugin[] {
 			},
 
 			load(id, options) {
+				if (!initiated) return
 				if (options?.ssr) return
 				for (const name in bundles) {
 					const bundle = bundles[name]
@@ -345,7 +344,8 @@ export function bundlePlugin(): Plugin[] {
 
 
 export function findBundleApi(config: ResolvedConfig): BundlePublicAPI | never {
-	const api = config.plugins.find(plugin => plugin?.name === 'ssr-tools:bundle')?.api
-	if (!api) throw new Error("No bundle API found")
-	return api
+	const first = config.plugins.find(plugin => plugin?.name === 'ssr-tools:bundle')
+	if (!first) throw new Error("No bundle API found")
+	first.api.initiate()
+	return first.api
 }

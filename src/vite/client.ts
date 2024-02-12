@@ -11,12 +11,12 @@ export function client(): Plugin[] {
 	const bundleName = 'client'
 	const emptyModuleSource = 'export default {}'
 
+
 	return [
 		...bundlePlugin(),
 		{
-			name: 'ignored-ssr-tools:client',
+			name: 'ssr-tools:client',
 			enforce: 'pre',
-			
 			configResolved(config: ResolvedConfig) {
 				bundleApi = findBundleApi(config)
 			},

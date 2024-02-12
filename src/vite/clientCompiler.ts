@@ -13,6 +13,7 @@ export async function clientCompiler(name: string, ssrResolvedConfig: ResolvedCo
 	const clientVirtualId = `/${name}`
 
 	const ssrPlugins = ssrUserConfig?.plugins || []
+
 	const clientPlugins = (ssrPlugins.flat() as Plugin[])
 		.filter(plugin => plugin && plugin.name && !plugin?.name?.startsWith('ssr-tools:'))
 

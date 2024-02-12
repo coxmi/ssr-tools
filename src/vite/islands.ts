@@ -38,7 +38,7 @@ export function islands(userOptions: UserOptions = {}): Plugin[] {
 		...bundlePlugin(),
 		{
 			name: 'ssr-tools:islands',
-			
+
 			configResolved(config: ResolvedConfig) {
 				bundleApi = findBundleApi(config)
 				bundleApi(bundleName).onRender(provider.bundle)
