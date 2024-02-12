@@ -31,7 +31,7 @@ type DescribeImport = {
 export function islands(userOptions: UserOptions = {}): Plugin[] {
 
 	let bundleApi: BundlePublicAPI
-	const bundleName = 'islands-client'
+	const bundleName = 'client'
 	const provider = userOptions.provider || preactProvider
 
 	return [

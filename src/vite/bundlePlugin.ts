@@ -81,6 +81,11 @@ function createClientImport(absPathToFile: string, exported: string[] = []): Cli
 		variables.push(as)
 		return `import { ${name} as ${as} } from "${absPathToFile}"`
 	})
+
+	if (!exported.length) {
+		code.push(`import "${absPathToFile}"`)
+	}
+
 	return { 
 		code, 
 		variables,

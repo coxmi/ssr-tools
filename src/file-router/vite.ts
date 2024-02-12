@@ -90,16 +90,7 @@ export function fileRouter(opts: UserOptions): PluginOption {
 			stylesheets.set(id, css)
 
 			return [
-				// remove the FOUC caused by vite applying styles after js initialisation
-				{
-					tag: 'script',
-					attrs: {
-						type: 'module',
-						src: `/@file-router-styles-dev?v=${id}`,
-					},
-					injectTo: 'body'
-				},
-				// returns js imports, so vite handles css hmr as standard
+				// remove the FOUC by including styles statically on first load
 				{
 					tag: 'link',
 					attrs: {
@@ -108,6 +99,18 @@ export function fileRouter(opts: UserOptions): PluginOption {
 					},
 					injectTo: 'head'
 				},
+				// returns js imports, so vite handles css hmr as standard
+				// the initial stylesheet is removed on load
+				{
+					tag: 'script',
+					attrs: {
+						type: 'module',
+						src: `/@file-router-styles-dev?v=${id}`,
+					},
+					injectTo: 'body'
+				},
+				
+				
 
 			]
 		},
@@ -226,8 +229,8 @@ export async function fileRouterMiddleware(configPathOrFolder: string = '') {
 		}
 
 		const scripts = []
-		if (manifest['islands-client.js']) {
-			const src = '/' + manifest['islands-client.js'].file
+		if (manifest['client.js']) {
+			const src = '/' + manifest['client.js'].file
 			scripts.push(`<script src="${src}"></script>`)
 		}
 

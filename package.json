@@ -30,6 +30,11 @@
       "require": "./dist/file-router/vite.mjs",
       "types": "./dist/file-router/vite.d.ts"
     },
+    "./vite/client": {
+      "import": "./dist/vite/client.mjs",
+      "require": "./dist/vite/client.mjs",
+      "types": "./dist/vite/client.d.ts"
+    },
     "./vite/islands": {
       "import": "./dist/vite/islands.mjs",
       "require": "./dist/vite/islands.mjs",
