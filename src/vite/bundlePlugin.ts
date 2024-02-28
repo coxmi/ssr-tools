@@ -256,7 +256,7 @@ export function bundlePlugin(): Plugin[] {
 				if (!initiated) return
 				// resolve ssr-tools relative to the main project, otherwise repositories using `npm link` error with:
 				// [vite]: Rollup failed to resolve import "ssr-tools/…" from "../linked-package/path/to/component.tsx".
-				if (id.startsWith('ssr-tools/')) {
+				if (id === 'ssr-tools' || id.startsWith('ssr-tools/')) {
 					return createRequire(import.meta.url).resolve(id)
 				}
 			},
