@@ -258,7 +258,7 @@ export async function fileRouterMiddleware(configPathOrFolder: string = '') {
 
 	// add public directory
 	if (viteConfig.publicDir) {
-		router.use('/public', serveStatic(viteConfig.publicDir))
+		router.use(serveStatic(viteConfig.publicDir))
 	}
 
 	return combineMiddleware([
