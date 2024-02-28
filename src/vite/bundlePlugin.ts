@@ -263,6 +263,7 @@ export function bundlePlugin(): Plugin[] {
 
 			async buildEnd() {
 				if (!initiated) return
+
 				// build the client bundles (runs in non-dev modes only)
 				// save output in main build manifest using `this.emitFile`
 				const pluginContext = this

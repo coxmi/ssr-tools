@@ -11,7 +11,6 @@ export function client(): Plugin[] {
 	const bundleName = 'client'
 	const emptyModuleSource = 'export default {}'
 
-
 	return [
 		...bundlePlugin(),
 		{

@@ -7,6 +7,8 @@ import { isObject } from './../utility/object.ts'
 import { buildRoutes, matchRoute } from './routes.ts'
 import { addToHead, addToBody } from './html.ts'
 import { sha } from './../utility/crypto.ts'
+import serveStatic from 'serve-static'
+import Router from 'router'
 
 import type { PluginOption, UserConfig, ResolvedConfig, ViteDevServer, ModuleNode } from 'vite'
 
@@ -242,12 +244,25 @@ export async function fileRouterMiddleware(configPathOrFolder: string = '') {
 		return res.end(html)
 	}
 
-	const preMiddlewares = []
-	if (userOptions.removeTrailingSlash) preMiddlewares.push(middlewareRemoveTrailingSlash)
+	const router = Router()
 
-	/* @ts-ignore */
+	// remove trailing slash if necessary
+	if (userOptions.removeTrailingSlash) {
+		router.use(middlewareRemoveTrailingSlash)
+	}
+
+	// add assets
+	if (settings.assetsDirAbsolute) {
+		router.use('/assets', serveStatic(settings.assetsDirAbsolute))
+	}
+
+	// add public directory
+	if (viteConfig.publicDir) {
+		router.use('/public', serveStatic(viteConfig.publicDir))
+	}
+
 	return combineMiddleware([
-		...preMiddlewares,
+		router,
 		main
 	])
 }
