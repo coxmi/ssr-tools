@@ -199,7 +199,7 @@ function isNodeIsland(nodeAST: FunctionNodes) {
 type ProcessExportOptions = {
 	/** Name of function to wrap exports with */
 	name: string,
-	/** Node path e.g. `ssr-tools/hydrate/preact` of file to import hydration function from */
+	/** Node path e.g. `ssr-tools/islands/preact/ssr` of file to import hydration function from */
 	importFrom?: string,
 	/** Import the function with a named import (`name` argument) */
 	importNamed?: boolean,

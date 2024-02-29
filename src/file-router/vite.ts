@@ -8,7 +8,7 @@ import { buildRoutes, matchRoute } from './routes.ts'
 import { addToHead, addToBody } from './html.ts'
 import { sha } from './../utility/crypto.ts'
 import serveStatic from 'serve-static'
-import Router from 'router'
+import createRouter from 'router'
 
 import type { PluginOption, UserConfig, ResolvedConfig, ViteDevServer, ModuleNode } from 'vite'
 
@@ -157,11 +157,9 @@ export function fileRouter(opts: UserOptions): PluginOption {
 				const importSource = devFindRoute(settings, url)
 				if (typeof importSource !== 'string') return next()
 
-				const handler = (await server.ssrLoadModule(importSource)).default
-
-				// TODO: parse and execute based on a pattern
-				// e.g. native Response object, preact component default
-				const result = await handler(req, res)
+				const imported = (await server.ssrLoadModule(importSource))
+				let result = await handleImport(imported, req, res)
+				if (result === false) return next()
 
 				// in dev, allow hmr and plugins to edit output
 				const html = await server.transformIndexHtml(url, result)
@@ -182,7 +180,7 @@ export async function fileRouterMiddleware(configPathOrFolder: string = '') {
 	const configFile = findConfigFile(configPathOrFolder)
 	const viteConfig = await resolveConfig({
 		configFile: configFile
-	})
+	}, 'build')
 
 	const plugin = viteConfig.plugins.find(plugin => plugin.name === 'ssr-tools:file-router')?.api
 	if (!plugin) throw new Error(`No ssr-tools:file-router plugin found — please add to your vite config`)
@@ -200,7 +198,7 @@ export async function fileRouterMiddleware(configPathOrFolder: string = '') {
 		root: settings.root,
 	})
 
-	const main = async (req, res, next) => {
+	const main = async (req: any, res: any, next: any) => {
 
 		const url = req.originalUrl
 		
@@ -216,12 +214,11 @@ export async function fileRouterMiddleware(configPathOrFolder: string = '') {
 		const fileinfo = manifest[filepathRelative] 
 		if (!fileinfo) return next()
 		
-		const importBuilt = path.join(settings.outDirAbsolute, fileinfo.file)
-		const handler = (await import(importBuilt)).default
-
-		// TODO: parse and execute based on a pattern
-		// e.g. native Response object, preact component default
-		let html = await handler(req, res)
+		const importPath = path.join(settings.outDirAbsolute, fileinfo.file)
+		const imported = await import(importPath)
+		
+		let html = await handleImport(imported, req, res)
+		if (html === false) return next()
 
 		// add scripts and styles to result from manifest
 		const stylesheets = []
@@ -244,7 +241,7 @@ export async function fileRouterMiddleware(configPathOrFolder: string = '') {
 		return res.end(html)
 	}
 
-	const router = Router()
+	const router = createRouter()
 
 	// remove trailing slash if necessary
 	if (userOptions.removeTrailingSlash) {
@@ -261,10 +258,23 @@ export async function fileRouterMiddleware(configPathOrFolder: string = '') {
 		router.use(serveStatic(viteConfig.publicDir))
 	}
 
-	return combineMiddleware([
-		router,
-		main
-	])
+	router.use(main)
+	return router
+}
+
+
+async function handleImport(imported: any, req: any, res: any): Promise<string | false> {
+	// TODO: parse and execute based on a pattern
+	// e.g. native Response object or preact component
+
+	let result = await imported.default(req, res)
+
+	// no response, go to next middleware
+	if (result === false || result === undefined) return false
+
+	// allow string types as html
+	if (typeof result === 'string') return result
+	return false
 }
 
 
@@ -389,25 +399,4 @@ function toAbsolutePath(to: string, from: string = process.cwd()): string {
 	if (to.startsWith('/')) return to
 	if (!from.startsWith('/')) throw new Error('"from" must be an absolute path')
 	return path.join(from, to)
-}
-
-
-/**
- * Combine multiple middleware together.
- *
- * @param middlewares functions of form:
- *   function(req, res, next) { ... }
- * @return single combined middleware
- */
-function combineMiddleware(middlewares: Array<(...arg: any[]) => any>) {
-	// taken from https://stackoverflow.com/a/32640935
-	if (middlewares.length === 1) return middlewares[0]
-	return middlewares.reduce(function(a, b) {
-		return function(req, res, next) {
-			a(req, res, function(err: any) {
-				if (err) return next(err)
-        		b(req, res, next)
-      		})
-    	}
-  	})
 }
