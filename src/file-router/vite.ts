@@ -9,6 +9,7 @@ import { addToHead, addToBody } from './html.ts'
 import { sha } from './../utility/crypto.ts'
 import serveStatic from 'serve-static'
 import createRouter from 'router'
+import { importUserModule } from '../utility/userEnv.ts'
 
 import type { PluginOption, UserConfig, ResolvedConfig, ViteDevServer, ModuleNode } from 'vite'
 
@@ -263,6 +264,8 @@ export async function fileRouterMiddleware(configPathOrFolder: string = '') {
 }
 
 
+const { default: renderToString } = await importUserModule('preact-render-to-string/jsx')
+
 async function handleImport(imported: any, req: any, res: any): Promise<string | false> {
 	// TODO: parse and execute based on a pattern
 	// e.g. native Response object or preact component
@@ -274,6 +277,12 @@ async function handleImport(imported: any, req: any, res: any): Promise<string |
 
 	// allow string types as html
 	if (typeof result === 'string') return result
+
+	// preact element
+	if (result !== null && result.constructor === undefined) {
+		return renderToString(result, {}, { pretty: true, jsx: false })
+	}
+
 	return false
 }
 

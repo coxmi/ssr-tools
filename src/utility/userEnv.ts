@@ -16,6 +16,5 @@ export async function importUserModule(moduleName: string, dir: string = process
 		/* @ts-ignore - actually requires a URL() instance, not a string */ 
 		from
 	)
-	console.log(userModulePath)
 	return await import(userModulePath)
 }
