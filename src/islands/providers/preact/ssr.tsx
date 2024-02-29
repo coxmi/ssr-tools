@@ -1,6 +1,6 @@
 import { createContext } from 'preact'
 import { useContext } from 'preact/hooks'
-import type { Component, Context } from 'preact'
+import type { ComponentConstructor, Context } from 'preact'
 
 const isServer = typeof window === 'undefined'
 
@@ -9,7 +9,7 @@ if (isServer) {
 	HydrationContext = createContext(false)
 }
 
-export const ssr = (Component: Component, name: string, importPath: string) => props => {
+export const ssr = (Component: ComponentConstructor, name: string, importPath: string) => (props: any) => {
 
 	const hasParentHydration = useContext(HydrationContext)
 

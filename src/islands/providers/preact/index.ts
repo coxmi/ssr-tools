@@ -1,4 +1,4 @@
-import type { Provider } from './../../vite.ts'
+import type { Provider } from './../../../vite/islands.ts'
 
 const provider: Provider = {
 	ssr: {
