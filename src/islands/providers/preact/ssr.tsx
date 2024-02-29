@@ -12,12 +12,11 @@ if (isServer) {
 export const ssr = (Component: ComponentConstructor, name: string, importPath: string) => (props: any) => {
 
 	const hasParentHydration = useContext(HydrationContext)
-
-	return hasParentHydration
-		? <Component {...props} /> 
-		: <HydrationContext.Provider value={true}>
-			<preact-island data-name={name} data-props={JSON.stringify(props)} data-import={importPath}>
-				<Component {...props} />
-			</preact-island>
-		  </HydrationContext.Provider>
+	if (hasParentHydration) return <Component {...props} /> 
+	
+	return <HydrationContext.Provider value={true}>
+		<preact-island data-name={name} data-props={JSON.stringify(props)} data-import={importPath}>
+			<Component {...props} />
+		</preact-island>
+	</HydrationContext.Provider>
 }

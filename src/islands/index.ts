@@ -1,11 +1,10 @@
-
 import { 
 	createNamedExportAST,
 	createVariable,
 	createVariableFromVariableDeclarator,
 	wrapWithCallExpression,
 	addImportToAST, 
-	walker 
+	walker
 } from './ast.ts'
 
 import type { 
@@ -15,6 +14,7 @@ import type {
 	Expression,
 	ClassDeclaration, 
 	ClassExpression, 
+	CallExpression,
 	AnonymousFunctionDeclaration,
 	FunctionDeclaration, 
 	FunctionExpression, 
@@ -106,6 +106,9 @@ function functionParts(nodeAST: FunctionNodes): FunctionParts|false {
 }
 
 
+const hookRegex = /(use[A-Z])/
+const onEventRegex = /(on[A-Z])/
+
 /*
  * Tests whether the passed node is an island
  * Takes function, arrow function, and class nodes
@@ -133,6 +136,16 @@ function isNodeIsland(nodeAST: FunctionNodes) {
 		return false
 	}
 
+	// allow to set an island with "use island" as the first statement
+	const first = fnBody?.[0]
+	if (
+		first && 
+		first.type === 'ExpressionStatement' &&
+		first.expression.value === 'use island'
+	) {
+		return true
+	}
+
 	// if it's a class and includes a componentDidMount function
 	if (nodeAST.type === 'ClassDeclaration') {
 		const methods = nodeAST.body.body
@@ -142,54 +155,39 @@ function isNodeIsland(nodeAST: FunctionNodes) {
 		)
 		if (methods.find(isCDM)) return true
 	}
-
-	// find internal triggers for dom events
-	const internalTriggers: string[] = []
+	
 	let isIsland = false
 
-	if (fnBody) {
-		fnBody.forEach(statement => {
-			if (statement.type == 'FunctionDeclaration') {
-				internalTriggers.push(statement.id.name)
-			}
-			if (statement.type == 'VariableDeclaration') {
-				const arrow = statement.declarations.find(
-					x => x.init.type === 'ArrowFunctionExpression'
-				)
-				if (!arrow) return
-				internalTriggers.push(arrow.id.name)
-			}
-		})
-	}
-
 	walker(nodeAST, {
-		Identifier(node: Identifier) {
-		    if (/(use[A-Z])/.test(node.name)) isIsland = true
+		CallExpression(node: CallExpression) {
+			// test for hooks
+			if (node.callee.name && hookRegex.test(node.callee.name)) {
+				isIsland = true
+			}
 		},
-		ReturnStatement(node: ReturnStatement) {
-	   		walker(node, {
-	    		Identifier(_node: Identifier) {
-		    		if (_node.name && internalTriggers.includes(_node.name)) {
-						isIsland = true
-			        }
-		     	},
-		     	ArrowFunctionExpression(_node: ArrowFunctionExpression) {
-			       isIsland = true
-			    },
-		    })
-	 	},
-		JSXAttribute(node: Node) {
-		  	const isExpression = node.value && node.value.type === 'JSXExpressionContainer'
-		  	if (!isExpression) return
-
-		  	const isArrowFn = node.value.expression.type === 'ArrowFunctionExpression'
-			const isLocalFnRef = (
-				node.value.expression.type == 'Identifier' && 
-				internalTriggers.includes(node.value.expression.name)
-			)
-
-		    if (isArrowFn || isLocalFnRef) isIsland = true
-		},
+		// ReturnStatement(node: ReturnStatement) {
+	   	// 	walker(node, {
+	   	// 		CallExpression(_node: CallExpression) {
+	   	// 			// walk jsx calls, get props, and test for onEvent handler names
+	   	// 			if (['_jsx', '_jsxs', '_jsxDEV'].includes(_node.callee?.name)) {
+	   	// 				const props = _node.arguments?.[1]
+	   	// 				if (!props || props.type !== 'ObjectExpression') return
+	   					
+	   	// 				const handlers = props.properties.filter(prop => {
+	   	// 					const isEventHandler = prop?.key?.name && onEventRegex.test(prop.key.name)
+	   	// 					return isEventHandler
+	   	// 				})
+	   	// 				if (handlers.length) isIsland = true
+	   	// 			}
+	   	// 		},
+		//     })
+	 	// },
+		// JSXAttribute(node: Node) {
+		// 	if (!node?.name?.name) return
+		// 	const isExpression = node.value && node.value.type === 'JSXExpressionContainer'
+		// 	const hasOnEventHandler = onEventRegex.test(node.name.name)
+		// 	if (isExpression && hasOnEventHandler) isIsland = true
+		// },
 	})
 
 	return isIsland
