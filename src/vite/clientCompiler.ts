@@ -2,27 +2,9 @@ import fs from 'node:fs'
 import { resolve as resolvePath, join } from 'node:path'
 import url from 'node:url'
 import { resolve as resolveModule } from 'import-meta-resolve'
+import { importUserModule } from '../utility/userEnv.ts'
 
 import type { build, Plugin, UserConfig, ResolvedConfig } from 'vite'
-
-/**
- * Gets the user's instance of vite build:
- * `vite build` fails in some scenarios when multiple instances of vite are used in plugin and user context
- * (E.g. when npm linked in dev)
- */
-
-let viteBuild: typeof build
-async function getViteBuild(dir: string) {
-	if (viteBuild) return viteBuild
-	const from = url.pathToFileURL(join(dir, '_'))
-	const userVitePath = resolveModule(
-		'vite', 
-		/* @ts-ignore - actually requires URL, not string */ 
-		from
-	)
-	viteBuild = (await import(userVitePath)).build
-	return viteBuild
-}
 
 /**
  * Sub compiler to bundle client code, 
@@ -41,8 +23,11 @@ export async function clientCompiler(name: string, ssrResolvedConfig: ResolvedCo
 	const clientOutDir = join(ssrResolvedConfig.build.outDir, `../.${name}`)
 	const absClientOutDir = resolvePath(root, clientOutDir)
 
-	const build = await getViteBuild(envDir)
-	const manifest = await build({
+	// `vite build` fails in some scenarios when multiple instances of vite are used in plugin and user context
+	// (E.g. when npm linked in dev)
+	const viteBuild = (await importUserModule('vite', envDir)).build as typeof build
+	
+	const manifest = await viteBuild({
 		...ssrUserConfig,
 		configFile: false,
 		envFile: false,

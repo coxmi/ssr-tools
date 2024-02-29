@@ -10,8 +10,8 @@
   	"lib": [
   		"ESNext"
   	],
-  	"target": "es2020",
-  	"module": "es2020",
+  	"target": "es2022",
+  	"module": "nodenext",
   	"jsx": "react-jsx",
 	"jsxImportSource": "preact",
 	"declaration": true,
