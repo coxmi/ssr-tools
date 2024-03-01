@@ -1,6 +1,5 @@
 import fs from 'node:fs'
 import { resolve as resolvePath, join } from 'node:path'
-import url from 'node:url'
 import { importUserModule } from '../utility/userEnv.ts'
 
 import type { build, Plugin, UserConfig, ResolvedConfig } from 'vite'

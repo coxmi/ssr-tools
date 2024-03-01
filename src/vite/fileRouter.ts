@@ -1,17 +1,20 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { parse as parseUrl } from 'node:url'
 import { resolveConfig } from 'vite'
 import glob from 'fast-glob'
 import { isObject } from './../utility/object.ts'
-import { buildRoutes, matchRoute } from './routes.ts'
-import { addToHead, addToBody } from './html.ts'
+import { buildRoutes, matchRoute } from './../file-router/routes.ts'
+import { addToHead, addToBody } from './../file-router/html.ts'
 import { sha } from './../utility/crypto.ts'
 import serveStatic from 'serve-static'
-import createRouter from 'router'
-import { importUserModule } from '../utility/userEnv.ts'
+import * as middleware from './../file-router/middleware.ts'
+import { routeHandler } from './../file-router/routeHandler.ts'
 
-import type { PluginOption, UserConfig, ResolvedConfig, ViteDevServer, ModuleNode } from 'vite'
+// @ts-ignore
+import createRouter from 'router'
+
+
+import type { PluginOption, ResolvedConfig, ViteDevServer, ModuleNode } from 'vite'
 
 type UserOptions = {
 	dir: string,
@@ -46,6 +49,7 @@ export function fileRouter(opts: UserOptions): PluginOption {
 
 	return {
 		name: 'ssr-tools:file-router',
+		enforce: 'post',
 
 		api: {
 			userOptions: () => userOptions,
@@ -81,10 +85,10 @@ export function fileRouter(opts: UserOptions): PluginOption {
 		transformIndexHtml(html, ctx) {
 			if (!ctx.server) return
 
-			const importSource = devFindRoute(settings, ctx.path)
-			if (typeof importSource !== 'string') return
+			const matched = devMatchRoute(settings, ctx.path)
+			if (matched === null) return
 
-			const importedModules = ctx.server.moduleGraph.getModulesByFile(importSource)
+			const importedModules = ctx.server.moduleGraph.getModulesByFile(matched.route.module)
 			if (!importedModules) return
 
 			// save stylesheets indexed per route for use in load hook
@@ -111,10 +115,7 @@ export function fileRouter(opts: UserOptions): PluginOption {
 						src: `/@file-router-styles-dev?v=${id}`,
 					},
 					injectTo: 'body'
-				},
-				
-				
-
+				}
 			]
 		},
 
@@ -148,28 +149,30 @@ export function fileRouter(opts: UserOptions): PluginOption {
 	    	])
 
 	    	if (userOptions.removeTrailingSlash) {
-	    		server.middlewares.use(middlewareRemoveTrailingSlash)
+	    		server.middlewares.use(middleware.removeTrailingSlash)
 	    	}
 
-			server.middlewares.use(async (req, res, next) => {
-				const url = req.originalUrl
-				if (typeof url !== 'string') return next()
-				
-				const importSource = devFindRoute(settings, url)
-				if (typeof importSource !== 'string') return next()
+			return () => {
+				server.middlewares.use(async (req, res, next) => {
+					const url = req.originalUrl
+					if (typeof url !== 'string') return next()
+					
+					const matched = devMatchRoute(settings, url)
+					if (matched === null) return next()
 
-				const imported = (await server.ssrLoadModule(importSource))
-				let result = await handleImport(imported, req, res)
-				if (result === false) return next()
+					const imported = (await server.ssrLoadModule(matched.route.module))
+					let result = await routeHandler(imported, matched, req, res)
+					if (result === false) return next()
 
-				// in dev, allow hmr and plugins to edit output
-				const html = await server.transformIndexHtml(url, result)
+					// in dev, allow hmr and plugins to edit output
+					const html = await server.transformIndexHtml(url, result)
 
-				if (res.writableEnded) return next()
-				res.setHeader('Content-Type', 'text/html')
-				return res.end(html)
-			})
-		  },
+					if (res.writableEnded) return next()
+					res.setHeader('Content-Type', 'text/html')
+					return res.end(html)
+				})
+			}
+		},
 	}
 }
 
@@ -206,19 +209,16 @@ export async function fileRouterMiddleware(configPathOrFolder: string = '') {
 		if (typeof url !== 'string') return next()
 		
 		const matched = matchRoute(url, availableRoutes)
-		if (!matched) return next()
+		if (matched === null) return next()
 
-		const filepathRelative = matched.component.startsWith('/') 
-			? matched.component.slice(1)
-			: matched.component
-
+		const filepathRelative = matched.route.module.replace(settings.root + '/', '')
 		const fileinfo = manifest[filepathRelative] 
 		if (!fileinfo) return next()
 		
 		const importPath = path.join(settings.outDirAbsolute, fileinfo.file)
 		const imported = await import(importPath)
 		
-		let html = await handleImport(imported, req, res)
+		let html = await routeHandler(imported, matched, req, res)
 		if (html === false) return next()
 
 		// add scripts and styles to result from manifest
@@ -246,7 +246,7 @@ export async function fileRouterMiddleware(configPathOrFolder: string = '') {
 
 	// remove trailing slash if necessary
 	if (userOptions.removeTrailingSlash) {
-		router.use(middlewareRemoveTrailingSlash)
+		router.use(middleware.removeTrailingSlash)
 	}
 
 	// add assets
@@ -261,29 +261,6 @@ export async function fileRouterMiddleware(configPathOrFolder: string = '') {
 
 	router.use(main)
 	return router
-}
-
-
-const { default: renderToString } = await importUserModule('preact-render-to-string/jsx')
-
-async function handleImport(imported: any, req: any, res: any): Promise<string | false> {
-	// TODO: parse and execute based on a pattern
-	// e.g. native Response object or preact component
-
-	let result = await imported.default(req, res)
-
-	// no response, go to next middleware
-	if (result === false || result === undefined) return false
-
-	// allow string types as html
-	if (typeof result === 'string') return result
-
-	// preact element
-	if (result !== null && result.constructor === undefined) {
-		return renderToString(result, {}, { pretty: true, jsx: false })
-	}
-
-	return false
 }
 
 
@@ -315,23 +292,14 @@ export function settingsFromConfig(config: ResolvedConfig, userOptions: UserOpti
 }
 
 
-function devFindRoute(settings: SettingsFromConfig, url: string) {
+function devMatchRoute(settings: SettingsFromConfig, url: string) {
 	const availableRoutes = buildRoutes({
 		dir: settings.routerDirAbsolute,
 		files: glob.sync(settings.routerGlobAbsolute),
 		root: settings.root,
 	})
 	if (!availableRoutes.length) return null
-	
-	const matched = matchRoute(url, availableRoutes)
-	if (!matched) return null
-
-	const filepathRelative = matched.component.startsWith('/') 
-		? matched.component.slice(1)
-		: matched.component
-
-	const importSource = path.join(settings.root, filepathRelative)
-	return importSource
+	return matchRoute(url, availableRoutes)
 }
 
 
@@ -389,20 +357,6 @@ function findConfigFile(configPathOrFolder: string = process.cwd()) {
 	throw new Error(`No config file found at ${test}`)
 }
 
-
-function middlewareRemoveTrailingSlash(req, res, next) {
-	const url = parseUrl(req.originalUrl)
-	if (url.pathname === '/') return next()
-	if (url.pathname && url.pathname.slice(-1) === '/') {
-		const query = url.search || ''
-		const safepath = url.pathname.slice(0, -1).replace(/\/+/g, '/')
-		res.statusCode = 301
-		res.writeHead(301, { 'Location': safepath + query })
-		res.end()
-	} else {
-		next()
-	}
-}
 
 function toAbsolutePath(to: string, from: string = process.cwd()): string {
 	if (to.startsWith('/')) return to

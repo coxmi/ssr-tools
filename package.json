@@ -19,26 +19,17 @@
     "islands"
   ],
   "type": "module",
+  "types": "./dist/main.d.ts",
   "exports": {
+    ".": {
+      "import": "./dist/main.mjs",
+      "require": "./dist/main.mjs",
+      "types": "./dist/main.d.ts"
+    },
     "./file-router": {
       "import": "./dist/file-router/routes.mjs",
       "require": "./dist/file-router/routes.mjs",
       "types": "./dist/file-router/routes.d.ts"
-    },
-    "./file-router/vite": {
-      "import": "./dist/file-router/vite.mjs",
-      "require": "./dist/file-router/vite.mjs",
-      "types": "./dist/file-router/vite.d.ts"
-    },
-    "./vite/client": {
-      "import": "./dist/vite/client.mjs",
-      "require": "./dist/vite/client.mjs",
-      "types": "./dist/vite/client.d.ts"
-    },
-    "./vite/islands": {
-      "import": "./dist/vite/islands.mjs",
-      "require": "./dist/vite/islands.mjs",
-      "types": "./dist/vite/islands.d.ts"
     },
     "./islands": {
       "import": "./dist/islands/index.mjs",
