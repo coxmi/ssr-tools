@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import { resolve as resolvePath, join } from 'node:path'
-import { importUserModule } from '../utility/userEnv.ts'
+import { importUserModule, resolveUserModule } from '../utility/userEnv.ts'
 
 import type { build, Plugin, UserConfig, ResolvedConfig } from 'vite'
 
@@ -20,6 +20,11 @@ export async function clientCompiler(name: string, ssrResolvedConfig: ResolvedCo
 
 	const clientOutDir = join(ssrResolvedConfig.build.outDir, `../.${name}`)
 	const absClientOutDir = resolvePath(root, clientOutDir)
+
+	const aliases = {
+		'preact': await resolveUserModule('preact'),
+		'@preact/signals': await resolveUserModule('@preact/signals'),
+	}
 
 	// `vite build` fails in some scenarios when multiple instances of vite are used in plugin and user context
 	// (E.g. when npm linked in dev)
@@ -55,6 +60,13 @@ export async function clientCompiler(name: string, ssrResolvedConfig: ResolvedCo
 				}
 			},
 		],
+		resolve: {
+			...(ssrUserConfig?.resolve || {}),
+			alias: {
+				...(ssrUserConfig?.resolve?.alias || {}),
+				...aliases
+			}
+		},
 		logLevel: 'silent'
 	})
 
