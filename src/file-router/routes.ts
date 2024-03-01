@@ -85,10 +85,13 @@ function createRoute(component: string, absPath: string, pathParts: string[]) {
 	    const isDynamicPart = isDynamicSegment(part)
 	    
 	    // match routes in order of complexity (static, dynamic, spread)
-	    if (route.order < routeComplexity.DYNAMIC && isDynamicPart) {
-	    	route.order = routeComplexity.DYNAMIC
-	    } else if (route.order < routeComplexity.DYNAMIC_SPREAD && part.startsWith('[...')) {
-	    	route.order = routeComplexity.DYNAMIC_SPREAD
+	    // also multiply by depth (i) so dynamic root parts are at the end
+	    const maxDepth = 100
+	    if (route.order < routeComplexity.DYNAMIC && isDynamicPart && !part.startsWith('[...')) {
+	    	route.order = routeComplexity.DYNAMIC + (i/-maxDepth)
+	    }
+	    if (route.order < routeComplexity.DYNAMIC_SPREAD && part.startsWith('[...')) {
+	    	route.order = routeComplexity.DYNAMIC_SPREAD + (i/-maxDepth)
 	    }
 
 		// Remove square brackets at the start and end

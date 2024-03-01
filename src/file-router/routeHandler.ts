@@ -1,6 +1,7 @@
 import { importUserModule } from '../utility/userEnv.ts'
-import type { MatchedRoute } from './routes.ts'
 import http from 'node:http'
+import type { MatchedRoute } from './routes.ts'
+
 const { default: renderToString } = await importUserModule('preact-render-to-string/jsx')
 
 export type PageProps = {
@@ -20,13 +21,17 @@ export type PageProps = {
 export async function routeHandler(
 	imported: any, 
 	matched: MatchedRoute, 
-	req: PageProps['request'], 
-	res: PageProps['response']
+	req: any, 
+	res: any
 ): Promise<string | false> {
 
 	const [path, query] = req.originalUrl.split('?')
 	const searchParams = new URLSearchParams(query)
 
+	// no default export go to next middleware
+	if (!imported.default) return false
+
+	// run the default export with props
 	const result = await imported.default({ 
 		params: matched?.params ? Object.freeze({ ...matched.params }) : {},
 		query: searchParams,
@@ -37,16 +42,13 @@ export async function routeHandler(
 	// no response, go to next middleware
 	if (result === false || result === undefined) return false
 
-	// allow string types as html
+	// allow string types as basic html
 	if (typeof result === 'string') return result
 
 	// preact element
 	if (result !== null && result.constructor === undefined) {
 		return renderToString(result, {}, { pretty: true, jsx: false })
 	}
-
-	// TODO: API consideration to use web standards where possible
-	// e.g. native Request/Response objects
 
 	return false
 }

@@ -161,13 +161,13 @@ export function fileRouter(opts: UserOptions): PluginOption {
 					if (matched === null) return next()
 
 					const imported = (await server.ssrLoadModule(matched.route.module))
+
 					let result = await routeHandler(imported, matched, req, res)
+					if (res.writableEnded) return
 					if (result === false) return next()
 
 					// in dev, allow hmr and plugins to edit output
 					const html = await server.transformIndexHtml(url, result)
-
-					if (res.writableEnded) return next()
 					res.setHeader('Content-Type', 'text/html')
 					return res.end(html)
 				})
@@ -219,6 +219,7 @@ export async function fileRouterMiddleware(configPathOrFolder: string = '') {
 		const imported = await import(importPath)
 		
 		let html = await routeHandler(imported, matched, req, res)
+		if (res.writableEnded) return
 		if (html === false) return next()
 
 		// add scripts and styles to result from manifest
@@ -237,7 +238,6 @@ export async function fileRouterMiddleware(configPathOrFolder: string = '') {
 		if (stylesheets.length) html = addToHead(html, stylesheets)
 		if (scripts.length) html = addToBody(html, scripts)
 
-		if (res.writableEnded) return next()
 		res.setHeader('Content-Type', 'text/html')
 		return res.end(html)
 	}
