@@ -21,11 +21,6 @@ export async function clientCompiler(name: string, ssrResolvedConfig: ResolvedCo
 	const clientOutDir = join(ssrResolvedConfig.build.outDir, `../.${name}`)
 	const absClientOutDir = resolvePath(root, clientOutDir)
 
-	const aliases = {
-		'preact': await resolveUserModule('preact'),
-		'@preact/signals': await resolveUserModule('@preact/signals'),
-	}
-
 	// `vite build` fails in some scenarios when multiple instances of vite are used in plugin and user context
 	// (E.g. when npm linked in dev)
 	const viteBuild = (await importUserModule('vite', envDir)).build as typeof build
@@ -61,11 +56,7 @@ export async function clientCompiler(name: string, ssrResolvedConfig: ResolvedCo
 			},
 		],
 		resolve: {
-			...(ssrUserConfig?.resolve || {}),
-			alias: {
-				...(ssrUserConfig?.resolve?.alias || {}),
-				...aliases
-			}
+			...(ssrUserConfig?.resolve || {})
 		},
 		logLevel: 'silent'
 	})

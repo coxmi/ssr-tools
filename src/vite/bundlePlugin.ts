@@ -321,7 +321,6 @@ export function bundlePlugin(): Plugin[] {
 						// the script would otherwise be cached on the initial
 						// route in dev mode
 						src: `${bundle.devName}?v=${sha(ctx.path)}`
-						
 					}, 
 					injectTo: 'body' 
 				}))
