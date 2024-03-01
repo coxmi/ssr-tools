@@ -25,8 +25,7 @@ export async function routeHandler(
 	res: any
 ): Promise<string | false> {
 
-	const [path, query] = req.originalUrl.split('?')
-	const searchParams = new URLSearchParams(query)
+	const [path, _] = req.originalUrl.split('?')	
 
 	// no default export go to next middleware
 	if (!imported.default) return false
@@ -34,7 +33,8 @@ export async function routeHandler(
 	// run the default export with props
 	const result = await imported.default({ 
 		params: matched?.params ? Object.freeze({ ...matched.params }) : {},
-		query: searchParams,
+		path: path,
+		query: req.query,
 		request: req, 
 		response: res 
 	})
