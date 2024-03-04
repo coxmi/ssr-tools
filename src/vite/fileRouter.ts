@@ -17,9 +17,9 @@ import createRouter from 'router'
 import type { PluginOption, ResolvedConfig, ViteDevServer, ModuleNode } from 'vite'
 
 type UserOptions = {
-	dir: string,
-	glob: string,
-	removeTrailingSlash: boolean
+	dir?: string,
+	glob?: string,
+	removeTrailingSlash?: boolean
 }
 
 type SettingsFromConfig = ReturnType<typeof settingsFromConfig>
