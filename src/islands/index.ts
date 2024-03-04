@@ -109,6 +109,20 @@ function functionParts(nodeAST: FunctionNodes): FunctionParts|false {
 const hookRegex = /(use[A-Z])/
 const onEventRegex = /(on[A-Z])/
 
+const jsxReturnExpressionType = {
+	'JSXFragment' : true,
+	'JSXElement' : true,
+} as const
+
+const jsxRuntimeExpressions = {
+	'jsx' : true,
+	'jsxs' : true,
+	'jsxDEV' : true,
+	'_jsx' : true,
+	'_jsxs' : true,
+	'_jsxDEV' : true,
+} as const
+
 /*
  * Tests whether the passed node is an island
  * Takes function, arrow function, and class nodes
@@ -122,13 +136,12 @@ function isNodeIsland(nodeAST: FunctionNodes) {
 	if (!returnExpression) return false
 
 	// test for untransformed JSX as return type
-	const hasReturnJSX = ['JSXFragment', 'JSXElement'].includes(returnExpression.type)
+	const hasReturnJSX = jsxReturnExpressionType[returnExpression.type] || false
 	
 	// test for jsx-runtime transform
 	const hasReturnJSXRuntimeTransformed = (
-		returnExpression && 
-		returnExpression.type === 'CallExpression' && 
-		['_jsx', '_jsxs', '_jsxDEV'].includes(returnExpression.callee?.name)
+		returnExpression.type === 'CallExpression' &&
+		jsxRuntimeExpressions[returnExpression.callee?.name]
 	)
 
 	// bail early if no JSX found

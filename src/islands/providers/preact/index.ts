@@ -10,6 +10,10 @@ const provider: Provider = {
 		return ''
 			+ imports.join("\n") 
 			+ "\n" 
+			// import preact at the top level in the project scope:
+			// otherwise resolves from the ssr-tools scope and doesn't deduplicate,
+			// which results in undefined __H errors on the frontend
+			+ `import "preact"` + "\n"
 			+ `import { client as preactIslandClient } from "ssr-tools/islands/preact/client"` + "\n" 
 			+ code.join("\n") + "\n"
 			+ `preactIslandClient({` + "\n"

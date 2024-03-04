@@ -62,8 +62,8 @@
     "pub": "npm run build && tsc || true && npm version patch && npm publish"
   },
   "peerDependencies": {
-    "preact": "^10",
-    "vite": "^5.1.4"
+    "preact": ">=10",
+    "vite": ">=5"
   },
   "dependencies": {
     "@babel/generator": "^7.23.4",
