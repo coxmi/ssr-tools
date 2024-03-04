@@ -3,12 +3,12 @@ import path from 'node:path'
 import { resolveConfig } from 'vite'
 import glob from 'fast-glob'
 import { isObject } from './../utility/object.ts'
-import { buildRoutes, matchRoute } from './../file-router/routes.ts'
+import { buildRoutes } from './../file-router/routes.ts'
 import { addToHead, addToBody } from './../file-router/html.ts'
 import { sha } from './../utility/crypto.ts'
 import serveStatic from 'serve-static'
 import * as middleware from './../file-router/middleware.ts'
-import { routeHandler } from './../file-router/routeHandler.ts'
+import { requestHandler } from './../file-router/request.ts'
 
 // @ts-ignore
 import createRouter from 'router'
@@ -16,25 +16,31 @@ import createRouter from 'router'
 
 import type { PluginOption, ResolvedConfig, ViteDevServer, ModuleNode } from 'vite'
 
-type UserOptions = {
+type NonOptional<T> = { 
+	[K in keyof Required<T>]: Exclude<T[K], undefined> 
+}
+
+type FileRouterUserOptions = {
 	dir?: string,
 	glob?: string,
 	removeTrailingSlash?: boolean
 }
+
+type FileRouterOptions = NonOptional<FileRouterUserOptions>
 
 type SettingsFromConfig = ReturnType<typeof settingsFromConfig>
 
 /**
  * Vite plugin to allow ssr-tools:file-router in dev mode
  */
-export function fileRouter(opts: UserOptions): PluginOption {
+export function fileRouter(opts: FileRouterUserOptions): PluginOption {
 
 	// save server in plugin scope to access later in dev mode load step
 	let server: ViteDevServer
 	let settings: SettingsFromConfig
 
 	// default options
-	const defaults: UserOptions = { 
+	const defaults: FileRouterOptions = { 
 		dir: 'src/pages', 
 		glob: '**/*.{ts,tsx,js,jsx}', 
 		removeTrailingSlash: true
@@ -86,7 +92,7 @@ export function fileRouter(opts: UserOptions): PluginOption {
 			if (!ctx.server) return
 
 			const matched = devMatchRoute(settings, ctx.path)
-			if (matched === null) return
+			if (!matched.route) return
 
 			const importedModules = ctx.server.moduleGraph.getModulesByFile(matched.route.module)
 			if (!importedModules) return
@@ -156,20 +162,19 @@ export function fileRouter(opts: UserOptions): PluginOption {
 				server.middlewares.use(async (req, res, next) => {
 					const url = req.originalUrl
 					if (typeof url !== 'string') return next()
-					
-					const matched = devMatchRoute(settings, url)
-					if (matched === null) return next()
-
-					const imported = (await server.ssrLoadModule(matched.route.module))
-
-					let result = await routeHandler(imported, matched, req, res)
-					if (res.writableEnded) return
-					if (result === false) return next()
-
-					// in dev, allow hmr and plugins to edit output
-					const html = await server.transformIndexHtml(url, result)
-					res.setHeader('Content-Type', 'text/html')
-					return res.end(html)
+					const matchedRoute = devMatchRoute(settings, url)
+					const importPath = matchedRoute.route ? matchedRoute.route.module : undefined
+					const errorImportPath = matchedRoute.route?.error?.module || matchedRoute.defaultError?.module
+					await requestHandler({
+						matchedRoute,
+						importPath,
+						errorImportPath,
+						importer: server.ssrLoadModule,
+						htmlTransform: html => server.transformIndexHtml(url, html),
+						req, 
+						res, 
+						next
+					})
 				})
 			}
 		},
@@ -196,7 +201,7 @@ export async function fileRouterMiddleware(configPathOrFolder: string = '') {
 
 	const manifest = JSON.parse(fs.readFileSync(settings.manifestPathAbsolute, 'utf8'))
 
-	const availableRoutes = buildRoutes({
+	const matchRoute = buildRoutes({
 		dir: settings.routerDirAbsolute,
 		files: glob.sync(settings.routerGlobAbsolute),
 		root: settings.root,
@@ -205,41 +210,45 @@ export async function fileRouterMiddleware(configPathOrFolder: string = '') {
 	const main = async (req: any, res: any, next: any) => {
 
 		const url = req.originalUrl
-		
 		if (typeof url !== 'string') return next()
-		
-		const matched = matchRoute(url, availableRoutes)
-		if (matched === null) return next()
 
-		const filepathRelative = matched.route.module.replace(settings.root + '/', '')
-		const fileinfo = manifest[filepathRelative] 
-		if (!fileinfo) return next()
-		
-		const importPath = path.join(settings.outDirAbsolute, fileinfo.file)
-		const imported = await import(importPath)
-		
-		let html = await routeHandler(imported, matched, req, res)
-		if (res.writableEnded) return
-		if (html === false) return next()
+		const matchedRoute = matchRoute(url)
+		const routePathRelative = matchedRoute.route?.module.replace(settings.root + '/', '') || ''
+		const routeInfo = manifest[routePathRelative] 
+		if (!routeInfo) return next()
+		const importPath = path.join(settings.outDirAbsolute, routeInfo.file)
+
+		const errorPath = matchedRoute.route?.error?.module || matchedRoute.defaultError?.module || ''
+		const errorPathRelative = errorPath.replace(settings.root + '/', '')
+		const errorInfo = manifest[errorPathRelative] 
+		const errorImportPath = errorInfo ? path.join(settings.outDirAbsolute, errorInfo.file) : undefined
 
 		// add scripts and styles to result from manifest
-		const stylesheets = []
+		const stylesheets: string[] = []
 		if (manifest['style.css']) {
 			const src = '/' + manifest['style.css'].file
 			stylesheets.push(`<link rel="stylesheet" href="${src}">`)
 		}
 
-		const scripts = []
+		const scripts: string[] = []
 		if (manifest['client.js']) {
 			const src = '/' + manifest['client.js'].file
 			scripts.push(`<script src="${src}"></script>`)
 		}
 
-		if (stylesheets.length) html = addToHead(html, stylesheets)
-		if (scripts.length) html = addToBody(html, scripts)
-
-		res.setHeader('Content-Type', 'text/html')
-		return res.end(html)
+		await requestHandler({
+			matchedRoute,
+			importPath,
+			errorImportPath,
+			htmlTransform: html => {
+				if (stylesheets.length) html = addToHead(html, stylesheets)
+				if (scripts.length) html = addToBody(html, scripts)
+				return html
+			},
+			req, 
+			res, 
+			next
+		})		
 	}
 
 	const router = createRouter()
@@ -264,7 +273,7 @@ export async function fileRouterMiddleware(configPathOrFolder: string = '') {
 }
 
 
-export function settingsFromConfig(config: ResolvedConfig, userOptions: UserOptions) {
+export function settingsFromConfig(config: ResolvedConfig, userOptions: FileRouterOptions) {
 
 	const root = config.root
 	const outDirAbsolute = toAbsolutePath(config.build.outDir, root)
@@ -293,13 +302,12 @@ export function settingsFromConfig(config: ResolvedConfig, userOptions: UserOpti
 
 
 function devMatchRoute(settings: SettingsFromConfig, url: string) {
-	const availableRoutes = buildRoutes({
+	const matchRoute = buildRoutes({
 		dir: settings.routerDirAbsolute,
 		files: glob.sync(settings.routerGlobAbsolute),
 		root: settings.root,
 	})
-	if (!availableRoutes.length) return null
-	return matchRoute(url, availableRoutes)
+	return matchRoute(url)
 }
 
 
