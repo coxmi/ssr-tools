@@ -39,6 +39,14 @@ export function islands(userOptions: UserOptions = {}): Plugin[] {
 		{
 			name: 'ssr-tools:islands',
 
+			config(config) {
+				return {
+					resolve: {
+						dedupe: ['preact', '@preact/signals']
+				    }
+				}
+			},
+
 			configResolved(config: ResolvedConfig) {
 				bundleApi = findBundleApi(config)
 				bundleApi(bundleName).onRender(provider.bundle)
