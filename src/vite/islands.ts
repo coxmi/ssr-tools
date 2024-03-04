@@ -37,15 +37,17 @@ export function islands(userOptions: UserOptions = {}): Plugin[] {
 	return [
 		...bundlePlugin(),
 		{
-			name: 'ssr-tools:islands',
-
+			name: 'ssr-tools-resolve-dedupe',
 			config(config) {
 				return {
 					resolve: {
 						dedupe: ['preact', '@preact/signals']
 				    }
 				}
-			},
+			}
+		},
+		{
+			name: 'ssr-tools:islands',
 
 			configResolved(config: ResolvedConfig) {
 				bundleApi = findBundleApi(config)
