@@ -175,11 +175,11 @@ async function parseRouteResult(ctx: RequestHandlerOptions, result: unknown): Pr
 }
 
 
-// TODO: better error messages
+// TODO: better error messages, and requestHandler for behaviour when syntax / no defined / import error
 const logError = (err: unknown) => {
 	if (err instanceof RequestError) {
-		console.log(`\n[Error: ${err.httpCode}]\n${err.message}\n`)
+		console.log(`\n[Error: ${err.httpCode}]\n${err.message}\n`, err)
 	} else if (err instanceof Error) {
-		console.log(err.message)
+		console.log(err)
 	}
 }
