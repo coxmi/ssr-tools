@@ -10,6 +10,9 @@ import serveStatic from 'serve-static'
 import * as middleware from './../file-router/middleware.ts'
 import { requestHandler } from './../file-router/request.ts'
 
+import type { CSS } from './utility.ts'
+import { devStyles, findConfigFile, toAbsolutePath } from './utility.ts'
+
 // @ts-ignore
 import createRouter from 'router'
 
@@ -69,6 +72,11 @@ export function fileRouter(opts: FileRouterUserOptions): PluginOption {
 			const routerGlobAbsolute = toAbsolutePath(userOptions.glob, routerDirAbsolute)
 			return {
 				build: {
+					// needs manifest for serving files later
+					manifest: true,
+					// needs static build assets
+					ssrEmitAssets: true,
+
 					rollupOptions: {
 						input: glob.sync(routerGlobAbsolute),
 						// specify chunks and entry names, otherwise vite puts them into 'assets'
@@ -88,9 +96,11 @@ export function fileRouter(opts: FileRouterUserOptions): PluginOption {
 		/** 
 		 * adds ssr css to page when in dev mode
 		 */
-		transformIndexHtml(html, ctx) {
+		async transformIndexHtml(html, ctx) {
 			if (!ctx.server) return
 
+			// TODO: [...all.ts] also matches on .well-known/ and other dotfiles
+			// what's the preferred solution to this?
 			const matched = devMatchRoute(settings, ctx.path)
 			if (!matched.route) return
 
@@ -99,7 +109,7 @@ export function fileRouter(opts: FileRouterUserOptions): PluginOption {
 
 			// save stylesheets indexed per route for use in load hook
 			const id = sha(ctx.path)
-			const css = devCollectStyles(importedModules)			
+			const css = await devStyles(importedModules, ctx)
 			stylesheets.set(id, css)
 
 			return [
@@ -223,6 +233,15 @@ export async function fileRouterMiddleware(configPathOrFolder: string = '') {
 		const errorInfo = manifest[errorPathRelative] 
 		const errorImportPath = errorInfo ? path.join(settings.outDirAbsolute, errorInfo.file) : undefined
 
+		/**
+		 * TODO:
+		 * • `style.css` is hardcoded when (build.cssCodeSplit === false) in vite.config.ts
+		 *    When true, we'll need to walk the graph of imports for css/js
+		 * 
+		 * • `client.js` will pull through from islands (double check title, may be better to be islands.js)
+		 * 
+		 */
+
 		// add scripts and styles to result from manifest
 		const stylesheets: string[] = []
 		if (manifest['style.css']) {
@@ -308,66 +327,4 @@ function devMatchRoute(settings: SettingsFromConfig, url: string) {
 		root: settings.root,
 	})
 	return matchRoute(url)
-}
-
-
-type CSS = { id: string, file: string, css: string }
-
-// adapted from https://github.com/vitejs/vite/issues/2282
-function devCollectStyles(modules: Set<ModuleNode>, styles: Record<string, CSS> = {}, checkedComponents = new Set()) {
-	for (const mod of modules) {
-		const isCss = mod.ssrModule && (
-			mod.file?.endsWith(".css") ||
-			mod.file?.endsWith(".scss") ||
-        	mod.file?.endsWith(".less")
-        )
-		
-		if (isCss && mod.ssrModule?.default) {
-      		styles[mod.url] = {
-      			id: mod.url,
-      			file: mod.file || '',
-      			css: mod.ssrModule?.default
-      		}
-    	}
-
-    	if (mod.importedModules.size > 0 && !checkedComponents.has(mod.id)) {
-      		checkedComponents.add(mod.id)
-      		devCollectStyles(mod.importedModules, styles, checkedComponents)
-    	}
-  	}
-
-  	return Object.values(styles)
-}
-
-
-function findConfigFile(configPathOrFolder: string = process.cwd()) {
-	
-	let test = configPathOrFolder
-	
-	// convert to abs
-	if (!test.startsWith('/')) {
-		test = path.join(process.cwd(), test)
-	}
-
-	if (fs.existsSync(test)) {
-		const stat = fs.lstatSync(test)
-		if (stat.isDirectory()) {
-			const matches = glob.sync([
-				path.join(test, 'vite.config.ts'),
-				path.join(test, 'vite.config.js'),
-			])
-			if (matches.length) return matches[0]
-		}
-		if (stat.isFile()) {
-			return test
-		}
-	}
-	throw new Error(`No config file found at ${test}`)
-}
-
-
-function toAbsolutePath(to: string, from: string = process.cwd()): string {
-	if (to.startsWith('/')) return to
-	if (!from.startsWith('/')) throw new Error('"from" must be an absolute path')
-	return path.join(from, to)
 }
