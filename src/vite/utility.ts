@@ -4,7 +4,7 @@ import glob from 'fast-glob'
 
 import type { ModuleNode, ViteDevServer } from 'vite'
 
-export type CSS = { id: string, file: string, css: string }
+export type CSS = { id: string | null, file: string | null, css: string | null }
 
 /**
  * Collects styles from module graph
@@ -12,7 +12,7 @@ export type CSS = { id: string, file: string, css: string }
  */
 export async function devStyles(
 	modules: Set<ModuleNode>, 
-	vite: ViteDevServer
+	server: ViteDevServer
 ) {
 	const styleModules = await devCollectStyleModules(modules)
 	const styleInfoPromises = styleModules.map(async mod => {
@@ -20,7 +20,7 @@ export async function devStyles(
 		if (typeof css !== 'string') {
 			// Vite 5 doesn't allow css imports in SSR dev any more (https://github.com/vitejs/vite/issues/19205)
 			// so we have to force load the module here with `?inline` if it doesn't already return a string
-			css = (await vite.server.ssrLoadModule(mod.file + '?inline')).default
+			css = (await server.ssrLoadModule(mod.file + '?inline')).default
 		}
 		return {
 			id: mod.id,
@@ -33,7 +33,7 @@ export async function devStyles(
 
 function devCollectStyleModules(
 	modules: Set<ModuleNode>, 
-	styles: Record<string, CSS> = {}, 
+	styles: Record<string, ModuleNode> = {}, 
 	checkedComponents = new Set()
 ) {
 

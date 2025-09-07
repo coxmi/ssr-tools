@@ -109,7 +109,7 @@ export function fileRouter(opts: FileRouterUserOptions): PluginOption {
 
 			// save stylesheets indexed per route for use in load hook
 			const id = sha(ctx.path)
-			const css = await devStyles(importedModules, ctx)
+			const css = await devStyles(importedModules, ctx.server)
 			stylesheets.set(id, css)
 
 			return [
