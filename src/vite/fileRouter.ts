@@ -173,17 +173,12 @@ export function fileRouter(opts: FileRouterUserOptions): PluginOption {
 					const url = req.originalUrl
 					if (typeof url !== 'string') return next()
 					const matchedRoute = devMatchRoute(settings, url)
-					const importPath = matchedRoute.route ? matchedRoute.route.module : undefined
-					const errorImportPath = matchedRoute.route?.error?.module || matchedRoute.defaultError?.module
 					await requestHandler({
+						url,
 						matchedRoute,
-						importPath,
-						errorImportPath,
 						importer: server.ssrLoadModule,
 						htmlTransform: html => server.transformIndexHtml(url, html),
-						req, 
-						res, 
-						next
+						ctx: { req, res, next }
 					})
 				})
 			}
@@ -215,23 +210,20 @@ export async function fileRouterMiddleware(configPathOrFolder: string = '') {
 		dir: settings.routerDirAbsolute,
 		files: glob.sync(settings.routerGlobAbsolute),
 		root: settings.root,
+		remapFiles: importPath => {
+			// use manifest to have buildRoutes match against the built files rather than source
+			const importPathRelative = importPath.replace(settings.root + '/', '')
+			const routeInfo = manifest[importPathRelative]
+			if (!routeInfo) return false
+			return path.join(settings.outDirAbsolute, routeInfo.file)
+		}
 	})
 
 	const main = async (req: any, res: any, next: any) => {
 
 		const url = req.originalUrl
 		if (typeof url !== 'string') return next()
-
 		const matchedRoute = matchRoute(url)
-		const routePathRelative = matchedRoute.route?.module.replace(settings.root + '/', '') || ''
-		const routeInfo = manifest[routePathRelative] 
-		if (!routeInfo) return next()
-		const importPath = path.join(settings.outDirAbsolute, routeInfo.file)
-
-		const errorPath = matchedRoute.route?.error?.module || matchedRoute.defaultError?.module || ''
-		const errorPathRelative = errorPath.replace(settings.root + '/', '')
-		const errorInfo = manifest[errorPathRelative] 
-		const errorImportPath = errorInfo ? path.join(settings.outDirAbsolute, errorInfo.file) : undefined
 
 		/**
 		 * TODO:
@@ -256,17 +248,14 @@ export async function fileRouterMiddleware(configPathOrFolder: string = '') {
 		}
 
 		await requestHandler({
+			url,
 			matchedRoute,
-			importPath,
-			errorImportPath,
 			htmlTransform: html => {
 				if (stylesheets.length) html = addToHead(html, stylesheets)
 				if (scripts.length) html = addToBody(html, scripts)
 				return html
 			},
-			req, 
-			res, 
-			next
+			ctx: { req, res, next }
 		})		
 	}
 

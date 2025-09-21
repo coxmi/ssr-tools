@@ -1,7 +1,9 @@
 import { parse as parseUrl } from 'node:url'
+import type { IncomingMessage, ServerResponse } from 'node:http'
 
-export function removeTrailingSlash(req, res, next) {
-	const url = parseUrl(req.originalUrl)
+export function removeTrailingSlash(req: IncomingMessage, res: ServerResponse, next: () => any) {
+	if (!req.url) return next()
+	const url = new URL(req.url, `http://${req.headers.host}/`)
 	if (url.pathname === '/') return next()
 	if (url.pathname && url.pathname.slice(-1) === '/') {
 		const query = url.search || ''

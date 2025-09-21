@@ -1,6 +1,7 @@
 import { join, dirname } from 'node:path'
 import globToRegexp from 'glob-to-regexp'
 import { pathToRegexp, match } from 'path-to-regexp'
+import type { ParamData } from 'path-to-regexp'
 
 const routeComplexity = {
 	STATIC: 1,
@@ -13,7 +14,7 @@ export type Route = {
 	routepath: string
 	parts: string[]
 	order: typeof routeComplexity[keyof typeof routeComplexity],
-	match?: ReturnType<typeof match>
+	match: ReturnType<typeof match>
 	regexp?: RegExp,
 	error: ErrorRoute | undefined
 }
@@ -26,14 +27,15 @@ export type ErrorRoute = {
 
 export type MatchedRoute = {
 	route: Route | undefined
-	params: Record<string, string | string[]>
+	params: ParamData
 	defaultError: ErrorRoute | undefined
-} & {}
+}
 
 export type BuildRoutesArgs = {
     files: string[]
     dir: string
     root: string
+    remapFiles?: (path: string) => string | false
 }
 
 
@@ -47,7 +49,7 @@ const catchAllSectionMatch = /^\[\.{3}.+\]/
  * build a list of routes to match against URLS.
  * To test the built routes against live URLs use `matchRoute(path, routes)`
  */
-export function buildRoutes({ files, dir, root }: BuildRoutesArgs) {
+export function buildRoutes({ files, dir, root, remapFiles }: BuildRoutesArgs) {
     
     if (!root.startsWith('/') || !dir.startsWith('/'))
     	throw new Error(`'root' and 'dir' must be absolute paths`)
@@ -62,7 +64,12 @@ export function buildRoutes({ files, dir, root }: BuildRoutesArgs) {
     const dirMatch: RegExp = new RegExp(dirMatchExact.toString().slice(1, -2))
 
     for (const file of files) {
-    	const component = file.replace(root, '')
+    	const absPath = remapFiles ? remapFiles(file) : file 
+    	if (!absPath) continue
+
+    	if (remapFiles && !absPath.startsWith('/')) {
+			throw new Error(`'remapFiles' must return an absolute path. Returned "${absPath}" for "${file}"`)
+		}
 
     	// absolute path localised to pages dir, without extension
     	// e.g. /home
@@ -75,7 +82,7 @@ export function buildRoutes({ files, dir, root }: BuildRoutesArgs) {
         const isErrorRoute = (pathParts[pathParts.length - 1] === '_error')
         if (isErrorRoute) {
         	errorRoutes.push({
-        		module: file,
+        		module: absPath,
         		parts: pathParts,
         		dir: join(...pathParts.slice(0, -1))
         	})
@@ -87,7 +94,7 @@ export function buildRoutes({ files, dir, root }: BuildRoutesArgs) {
         const ignore = pathParts.find(part => part.startsWith('_'))
         if (ignore) continue
 
-        routes.push(createRoute(component, file, pathParts))
+        routes.push(createRoute(absPath, pathParts))
     }
 
     for (const route of routes) {
@@ -105,10 +112,11 @@ export function buildRoutes({ files, dir, root }: BuildRoutesArgs) {
     return function matchFunction(path: string) {
     	const withoutQuery = path.replace(/\?.*$/, '')
     	for (const route of routes) {
-    		const matches = route.match ? route.match(withoutQuery) : false
+    		const matches = route.match(withoutQuery)
     		if (matches) return {
     			...structuredClone(template), 
     			route, 
+    			params: matches.params,
     		}
     	}
     	return structuredClone(template)
@@ -116,13 +124,14 @@ export function buildRoutes({ files, dir, root }: BuildRoutesArgs) {
 }
 
 
-function createRoute(component: string, absPath: string, pathParts: string[]) {
+function createRoute(absPath: string, pathParts: string[]) {
 	const route: Route = {
 		module: absPath,
 	    routepath: '',
 	    parts: pathParts,
 	    order: routeComplexity.STATIC,
-	    error: undefined
+	    error: undefined,
+	    match: () => false
 	}
 
 	for (let i = 0; i < pathParts.length; i++) {
@@ -156,7 +165,7 @@ function createRoute(component: string, absPath: string, pathParts: string[]) {
 	    
 	    if (isDynamicPart) {
 	    	if (catchAllSectionMatch.test(part)) {
-	    		route.routepath += `/:${normalizedPart}+`
+	    		route.routepath += `/*${normalizedPart}`
 	    	} else {
 	    		route.routepath += `/:${normalizedPart}`
 	    	}
@@ -165,8 +174,11 @@ function createRoute(component: string, absPath: string, pathParts: string[]) {
 	    }
 	}
 
-	route.match = match(route.routepath, { decode: decodeURIComponent })
-	route.regexp = pathToRegexp(route.routepath)
+	route.match = match(route.routepath, { 
+		decode: decodeURIComponent 
+	})
+
+	route.regexp = pathToRegexp(route.routepath).regexp
 	return route
 }
 

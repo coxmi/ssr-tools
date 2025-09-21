@@ -19,8 +19,8 @@ export async function resolveUserModule(moduleName: string, dir: string = proces
  * Gets the user's instance of a module
  */
 
-export async function importUserModule(moduleName: string, dir: string = process.cwd()) {
-	const userModulePath = await resolveUserModule(moduleName, dir)
+export async function importUserModule(moduleName: string, dir: string | false = process.cwd()) {
+	const userModulePath = await resolveUserModule(moduleName, dir || undefined)
 	return await import(userModulePath)
 }
 

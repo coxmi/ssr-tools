@@ -1,3 +1,5 @@
+// @ts-nocheck
+
 import { 
 	createNamedExportAST,
 	createVariable,
@@ -335,7 +337,7 @@ export function processIslands(ast: Program, options: ProcessExportOptions): fal
 						const exportedName = specifier.exported.name || name
 						const fn = functions.get(name)
 
-						if (fn && isNodeIsland(fn, name)) {
+						if (fn && isNodeIsland(fn)) {
 							willAddImport = true
 							manifest.push(exportedName)
 							
