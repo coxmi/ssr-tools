@@ -1,3 +1,4 @@
+import path from 'node:path'
 import { createRequire } from 'node:module'
 import { sha } from './../utility/crypto.ts'
 import { isKebabCase } from '../utility/string.ts'
@@ -261,7 +262,7 @@ export function bundlePlugin(): Plugin[] {
 				}
 			},
 
-			async buildEnd() {
+			async generateBundle() {
 				if (!initiated) return
 
 				// build the client bundles (runs in non-dev modes only)
@@ -285,17 +286,24 @@ export function bundlePlugin(): Plugin[] {
 					manifest.output.map(file => {
 						if (!file.name || file.type === 'asset') return
 						const name = `${file.name}.js`
+						const fileName = file.fileName.replace(/^assets\//, '')
+						
 						pluginContext.emitFile({
 							type: 'asset',
 							name: name,
-							source: file.code,
+							fileName: path.join(ssrResolvedConfig.build.assetsDir, fileName),
+							needsCodeReference: true,
+							originalFileName: name,
+							source: file.code
 						})
+
 						if (file.map) {
-							const mapSource = JSON.stringify(file.map)
+							const mapName = fileName.concat('.map')
 							pluginContext.emitFile({
 								type:'asset',
-								fileName: file.sourcemapFileName || undefined,
-								source: mapSource
+								fileName: path.join(ssrResolvedConfig.build.assetsDir, mapName),
+								needsCodeReference: false,
+								source: JSON.stringify(file.map)
 							})
 						}
 					})

@@ -31,6 +31,9 @@ type DescribeImport = {
 export function islands(userOptions: UserOptions = {}): Plugin[] {
 
 	let bundleApi: BundlePublicAPI
+	// TODO: this hardcodes the title of the js output file
+	// which needs to be dealt with in file router handlers
+	// when attaching css
 	const bundleName = 'client'
 	const provider = userOptions.provider || preactProvider
 

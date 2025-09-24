@@ -1,4 +1,3 @@
-import { parse as parseUrl } from 'node:url'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
 export function removeTrailingSlash(req: IncomingMessage, res: ServerResponse, next: () => any) {

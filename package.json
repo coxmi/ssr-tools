@@ -57,7 +57,7 @@
   ],
   "scripts": {
     "dev": "node build.mjs --dev",
-    "build": "rm -rf dist && node build.mjs",
+    "build": "rm -rf dist && node build.mjs && tsc",
     "test": "tsc --noEmit && jest",
     "pub": "npm run build && tsc || true && npm version patch && npm publish"
   },
@@ -74,6 +74,7 @@
     "acorn-jsx-walk": "^2.0.0",
     "acorn-walk": "^8.3.0",
     "fast-glob": "^3.3.2",
+    "fs-extra": "^11.3.2",
     "glob-to-regexp": "^0.4.1",
     "import-meta-resolve": "^4.0.0",
     "path-to-regexp": "^8.3.0",
@@ -82,6 +83,7 @@
     "serve-static": "^1.15.0"
   },
   "devDependencies": {
+    "@types/fs-extra": "^11.0.4",
     "@types/glob-to-regexp": "^0.4.4",
     "@types/jest": "^29.5.8",
     "@types/serve-static": "^1.15.5",

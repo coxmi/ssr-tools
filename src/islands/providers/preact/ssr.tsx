@@ -1,6 +1,19 @@
 import { createContext } from 'preact'
 import { useContext } from 'preact/hooks'
-import type { ComponentConstructor, Context } from 'preact'
+import type { ComponentConstructor, Context, JSX } from 'preact'
+
+declare module "preact/jsx-runtime" {
+  namespace JSX {
+    interface IntrinsicElements {
+      "preact-island": {
+      	children: JSX.Element
+        'data-name': string,
+        'data-props': string,
+        'data-import': string,
+      }
+    }
+  }
+}
 
 const isServer = typeof window === 'undefined'
 

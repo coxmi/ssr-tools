@@ -1,9 +1,9 @@
 import { Parser } from 'acorn'
-/* @ts-ignore */
+// @ts-ignore
 import astringJSX from '@barelyhuman/astring-jsx'
 import jsx from 'acorn-jsx'
 
-/* @ts-ignore */
+// @ts-ignore
 import { extend as jsxWalk } from 'acorn-jsx-walk'
 import * as walk from 'acorn-walk'
 
@@ -49,6 +49,7 @@ export function addImportToAST(ast: Program, name: string, from: string, { named
       const hasExistingImport =
         child.specifiers.findIndex(x => {
           if (named) {
+          	// @ts-ignore
             return x.type === 'ImportSpecifier' && x.imported.name === name
           } else {
             return x.type === 'ImportDefaultSpecifier' && x.local.name === name

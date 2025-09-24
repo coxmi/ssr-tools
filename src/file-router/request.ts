@@ -47,24 +47,38 @@ type RequestHandlerOptions = {
 	}
 }
 
+type GetPagePropsArgs = {
+	url: string,
+	matchedRoute: MatchedRoute
+}
+
+export function getPageProps({ url, matchedRoute }: GetPagePropsArgs): PageProps {
+	const [path, query] = url.split('?')
+	const props: PageProps = Object.freeze({
+		path: path,
+		params: matchedRoute.params ? Object.freeze({ ...matchedRoute.params }) : Object.freeze({}),
+		query: new URLSearchParams(query),
+	})
+	return props
+}
+
 export async function requestHandler(opts: RequestHandlerOptions): Promise<boolean> {
 	
 	const {
 		url,
 		matchedRoute,
 		importer = ((x: string): Promise<unknown> => import(x)),
-		htmlTransform,
+		htmlTransform = async html => html,
 		ctx
 	} = opts
-
-	const [path, query] = url.split('?')
+	const props = getPageProps({ url, matchedRoute })
 	const importPath = matchedRoute.route?.module
 	const errorImportPath = matchedRoute.route?.error?.module
 
 	try {
 		// 404: no route matched
 		if (!importPath) {
-			let message = `No route matched "${path}"`
+			let message = `No route matched "${props.path}"`
 			throw new RequestError(404, errors.ROUTE_NOT_FOUND, message)
 		}
 
@@ -77,18 +91,13 @@ export async function requestHandler(opts: RequestHandlerOptions): Promise<boole
 			throw new RequestError(500, errors.DEFAULT_EXPORT_NOT_CALLABLE, message)
 		}
 
-		const props: PageProps = Object.freeze({
-			path: path,
-			params: matchedRoute.params ? Object.freeze({ ...matchedRoute.params }) : Object.freeze({}),
-			query: new URLSearchParams(query),
-		})
-
-		return await parseRouteResult(
-			importPath, 
-			ctx, 
-			await handler(props),
-			htmlTransform
-		)
+		const response = await handler(props)
+		const parsed = await parseRouteResult(response, importPath)
+		if (parsed.headers['Content-Type'] === 'text/html') {
+			ctx.res.setHeader('Content-Type', 'text/html')
+			ctx.res.end(await htmlTransform(parsed.body))
+			return true
+		}
 
 	} catch(err: unknown) {
 		let errCode = 500
@@ -122,12 +131,13 @@ export async function requestHandler(opts: RequestHandlerOptions): Promise<boole
 				error: errMessage
 			}
 
-			await parseRouteResult(
-				errorImportPath, 
-				ctx, 
-				await errorHandler(errorProps),
-				htmlTransform
-			)
+			const response = await errorHandler(errorProps)
+			const parsed = await parseRouteResult(response, errorImportPath)
+			if (parsed.headers['Content-Type'] === 'text/html') {
+				ctx.res.setHeader('Content-Type', 'text/html')
+				ctx.res.end(await htmlTransform(parsed.body))
+				return true
+			}
 			return false
 
 		} catch(err) {
@@ -141,48 +151,59 @@ export async function requestHandler(opts: RequestHandlerOptions): Promise<boole
 			return false
 		}
 	}
+
+	return false
 }
 
 const { default: renderToString } = await importUserModule('preact-render-to-string/jsx')
 
-async function parseRouteResult(
-	importPath: string,
-	ctx: RequestHandlerOptions['ctx'], 
-	result: unknown,
-	htmlTransform: HTMLTransform = x => x
-): Promise<boolean | never> {
+type ParsedRouteResult = {
+	headers: Record<string, string>
+	end: Boolean
+	body: string
+}
 
+export async function parseRouteResult(input: any, name?: string): Promise<ParsedRouteResult | never> {
+
+	const parsed: ParsedRouteResult = {
+		headers: {},
+		end: false,
+		body: '',
+	}
+	
 	// 404: nothing returned or user explicitly returned false, null, or undefined
-	if (result === undefined || result === false || result === null) {
-		const message = `Nothing returned from route handler "${importPath}"`
+	if (input === undefined || input === false || input === null) {
+		const message = `Nothing returned from route handler ${name ? `"${name}"` : ''}`
 		throw new RequestError(404, errors.EMPTY_HANDLER, message)
 	}
 
 	// any string is considered a text/html document by default
 	// TODO: as long as the Content-Type header hasn't been edited
-	if (typeof result === 'string') {
-		ctx.res.setHeader('Content-Type', 'text/html')
-		ctx.res.end(await htmlTransform(result))
-		return true
+	if (typeof input === 'string') {
+		parsed.headers['Content-Type'] = 'text/html'
+		parsed.body = input
+		parsed.end = true
+		return parsed
 	}
 
 	// render preact DOM nodes
 	// copy of isValidElement: https://github.com/preactjs/preact/blob/main/src/create-element.js#L100
 	// TODO: investigate stronger type check
-	if (result !== null && result.constructor === undefined) {
-		let html = renderToString(result, {}, { pretty: true, jsx: false })
-		ctx.res.setHeader('Content-Type', 'text/html')
-		ctx.res.end(await htmlTransform(html))
-		return true
+	if (input !== null && input.constructor === undefined) {
+		let html = renderToString(input, {}, { pretty: true, jsx: false })
+		parsed.headers['Content-Type'] = 'text/html'
+		parsed.body = html
+		parsed.end = true
+		return parsed
 	}
 
-	if (result instanceof Response) {
+	if (input instanceof Response) {
 		// TODO: parse Response object
 	}
 
 	throw new RequestError(
 		500, errors.RESULT_PARSE_FAILED,
-		`Handler return type "${typeof result}" not supported in ${importPath}`
+		`Handler return type "${typeof input}" not supported ${name ? `in "${name}"` : ''}`
 	)
 }
 

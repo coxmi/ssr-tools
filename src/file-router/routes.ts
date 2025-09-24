@@ -1,4 +1,4 @@
-import { join, dirname } from 'node:path'
+import { join } from 'node:path'
 import globToRegexp from 'glob-to-regexp'
 import { pathToRegexp, match } from 'path-to-regexp'
 import type { ParamData } from 'path-to-regexp'
@@ -46,7 +46,7 @@ const extensionMatch = /\.[^\.]+$/
 const catchAllSectionMatch = /^\[\.{3}.+\]/
 
 /**
- * build a list of routes to match against URLS.
+ * build a list of routes to match against URLs.
  * To test the built routes against live URLs use `matchRoute(path, routes)`
  */
 export function buildRoutes({ files, dir, root, remapFiles }: BuildRoutesArgs) {
@@ -60,7 +60,7 @@ export function buildRoutes({ files, dir, root, remapFiles }: BuildRoutesArgs) {
     // removes $ from end of page directory regex, e.g:
     // from: /^\/abs\/path\/to\/pages$/ 
 	// to:   /^\/abs\/path\/to\/pages/
-	const dirMatchExact: RegExp = globToRegexp(dir, { extended: true })
+	const dirMatchExact: RegExp = globToRegexp(dir, { extended: true, globstar: true })
     const dirMatch: RegExp = new RegExp(dirMatchExact.toString().slice(1, -2))
 
     for (const file of files) {
@@ -109,17 +109,46 @@ export function buildRoutes({ files, dir, root, remapFiles }: BuildRoutesArgs) {
     	defaultError: findErrorRoute(errorRoutes, ['index'])
     }
 
-    return function matchFunction(path: string) {
-    	const withoutQuery = path.replace(/\?.*$/, '')
-    	for (const route of routes) {
-    		const matches = route.match(withoutQuery)
-    		if (matches) return {
-    			...structuredClone(template), 
-    			route, 
-    			params: matches.params,
-    		}
-    	}
-    	return structuredClone(template)
+    const routesByModuleId: Record<string, Route> = {}
+    for (const route of routes) {
+    	routesByModuleId[route.module] = route
+    }
+
+    return {
+    	routes,
+    	errorRoutes,
+    	matchRoute: function (path: string, route?: Route): MatchedRoute {
+	    	const withoutQuery = path.replace(/\?.*$/, '')
+	    	if (route) {
+	    		const matches = route.match(withoutQuery)
+	    		if (matches) return {
+	    			...structuredClone(template), 
+	    			route, 
+	    			params: matches.params,
+	    		}
+	    	}
+	    	for (const route of routes) {
+	    		const matches = route.match(withoutQuery)
+	    		if (matches) return {
+	    			...structuredClone(template), 
+	    			route, 
+	    			params: matches.params,
+	    		}
+	    	}
+	    	return structuredClone(template)
+	    },
+	    findModuleRoute: function(file: string): Route | null {
+	    	return routesByModuleId[file] || null
+	    },
+	    isStatic: function(route: Route) {
+	    	return route.order === routeComplexity.STATIC
+	    },
+	    isDynamic: function(route: Route) {
+	    	return (
+	    		(route.order === routeComplexity.DYNAMIC) 
+	    		|| (route.order === routeComplexity.DYNAMIC_SPREAD)
+	    	)
+	    },
     }
 }
 

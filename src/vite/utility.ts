@@ -85,5 +85,5 @@ export function findConfigFile(configPathOrFolder: string = process.cwd()): stri
 export function toAbsolutePath(to: string, from: string = process.cwd()): string {
 	if (to.startsWith('/')) return to
 	if (!from.startsWith('/')) throw new Error('"from" must be an absolute path')
-	return path.join(from, to)
+	return path.join(from, to).replace(/\/$/, '')
 }

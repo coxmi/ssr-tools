@@ -1,23 +1,26 @@
-import fs from 'node:fs'
+import fs from 'fs-extra'
+import { writeFile, mkdir } from 'node:fs/promises'
 import path from 'node:path'
 import { resolveConfig } from 'vite'
 import glob from 'fast-glob'
+import globToRegexp from 'glob-to-regexp'
 import { isObject } from './../utility/object.ts'
 import { buildRoutes } from './../file-router/routes.ts'
 import { addToHead, addToBody } from './../file-router/html.ts'
 import { sha } from './../utility/crypto.ts'
 import serveStatic from 'serve-static'
 import * as middleware from './../file-router/middleware.ts'
-import { requestHandler } from './../file-router/request.ts'
+import { requestHandler, getPageProps, parseRouteResult } from './../file-router/request.ts'
 
 import type { CSS } from './utility.ts'
+import type { OutputChunk, OutputAsset } from 'rollup'
 import { devStyles, findConfigFile, toAbsolutePath } from './utility.ts'
 
 // @ts-ignore
 import createRouter from 'router'
 
 
-import type { PluginOption, ResolvedConfig, ViteDevServer, ModuleNode } from 'vite'
+import type { PluginOption, ResolvedConfig } from 'vite'
 
 type NonOptional<T> = { 
 	[K in keyof Required<T>]: Exclude<T[K], undefined> 
@@ -38,8 +41,8 @@ type SettingsFromConfig = ReturnType<typeof settingsFromConfig>
  */
 export function fileRouter(opts: FileRouterUserOptions): PluginOption {
 
-	// save server in plugin scope to access later in dev mode load step
-	let server: ViteDevServer
+	// save server in plugin scope to access later in dev mode load step	
+	let config: ResolvedConfig
 	let settings: SettingsFromConfig
 
 	// default options
@@ -55,6 +58,7 @@ export function fileRouter(opts: FileRouterUserOptions): PluginOption {
 	}
 
 	const stylesheets = new Map<string, CSS[]>()
+	let matchFiles: RegExp
 
 	return {
 		name: 'ssr-tools:file-router',
@@ -66,23 +70,47 @@ export function fileRouter(opts: FileRouterUserOptions): PluginOption {
 		},
 
 		config(config) {
+
 			// add all matching glob files to rollupOptions
 			const root = config.root || process.cwd()
 			const routerDirAbsolute = toAbsolutePath(userOptions.dir, root)
 			const routerGlobAbsolute = toAbsolutePath(userOptions.glob, routerDirAbsolute)
+
+			// can use to match files in output fns
+			// @ts-ignore
+			const defaultEntryFileNames = config.build?.rollupOptions?.output?.entryFileNames || '[name].js'
+			// @ts-ignore
+			const defaultChunkFileNames = config.build?.rollupOptions?.output?.chunkFileNames || '[name]-[hash].js'
+			const getDefaultChunkOption = function(x: string | ((arg: any) => string), chunk: any): string {
+				return typeof x === 'function' ? x(chunk) : x
+			}
+
+			matchFiles = globToRegexp(routerGlobAbsolute, { 
+				extended: true,
+				globstar: true
+			})
+
 			return {
 				build: {
 					// needs manifest for serving files later
 					manifest: true,
 					// needs static build assets
 					ssrEmitAssets: true,
-
 					rollupOptions: {
 						input: glob.sync(routerGlobAbsolute),
 						// specify chunks and entry names, otherwise vite puts them into 'assets'
+						// if the files match our globs, send them to server, otherwise use the 
+						// previously defined config options
 						output: {
-							entryFileNames: "routes/[name].js",
-							chunkFileNames: "routes/chunks/[name]-[hash].js",
+							entryFileNames: chunk => {
+								let name = ''
+								if (chunk.facadeModuleId && matchFiles.test(chunk.facadeModuleId)) name += "server/"
+								name += getDefaultChunkOption(defaultEntryFileNames, chunk)
+								return name
+							},
+							chunkFileNames: chunk => {
+								return "server/chunks/" + getDefaultChunkOption(defaultChunkFileNames, chunk)
+							}
 						}
 					},
 				}
@@ -90,6 +118,7 @@ export function fileRouter(opts: FileRouterUserOptions): PluginOption {
 		},
 
 		configResolved(resolvedConfig) {
+			config = resolvedConfig
 			settings = settingsFromConfig(resolvedConfig, userOptions)
 		},
 
@@ -183,6 +212,115 @@ export function fileRouter(opts: FileRouterUserOptions): PluginOption {
 				})
 			}
 		},
+
+		async writeBundle(options, bundle) {
+
+			// move assets to server directory
+			fs.cpSync(
+				settings.assetsDirAbsolute, 
+				path.join(settings.outDirAbsolute, 'server', config.build.assetsDir),
+				{ recursive: true }
+			);
+
+			const toRemove = path.join(settings.outDirAbsolute, config.build.assetsDir.split('/')[0])
+			const remove = () => fs.rmSync(toRemove, { recursive: true, force: true })
+			
+			const chunks: OutputChunk[] = []
+			const assets: Record<string, OutputAsset> = {}
+
+			for (const file of Object.values(bundle)) {
+				if (file.type === 'asset' && file.names[0]) {
+					assets[file.names[0]] = file
+				}
+				if (file.type === 'chunk' 
+					&& file.isEntry 
+					&& file.facadeModuleId 
+					&& matchFiles.test(file.facadeModuleId)) {
+					chunks.push(file)
+				}
+			}
+
+			if (!chunks.length) return remove()
+
+			// copy assets to static directory
+			fs.cpSync(
+				settings.assetsDirAbsolute, 
+				path.join(settings.outDirAbsolute, 'html', config.build.assetsDir), 
+				{recursive: true }
+			);
+			
+			remove()
+
+			const routes = buildRoutes({
+				dir: settings.routerDirAbsolute,
+				files: glob.sync(settings.routerGlobAbsolute),
+				root: settings.root,
+			})
+
+			const emitFile = async (outputPath: string, contents: string) => {
+				// emitFile only works during generateBundle, not later, 
+				// so we have to write the files directly
+				// this means the built files don't appear in vite's manifest
+				await mkdir(path.dirname(outputPath), { recursive: true })
+				await writeFile(outputPath, contents, { flag: 'w+' })
+			}
+
+			Promise.all(chunks.map(async chunk => {
+				// @ts-ignore
+				const entrySrc: string = chunk.facadeModuleId
+				const route = routes.findModuleRoute(entrySrc)
+				if (!route) return
+				
+				const chunkName = path.relative(settings.routerDirAbsolute, entrySrc)
+					.replace(/\.(js|jsx|mjs|ts|tsx)$/, '')
+
+				const outputDir = path.join(settings.outDirAbsolute, 'html')
+				const builtPath = path.join(settings.outDirAbsolute, chunk.fileName)
+				const exported = await import(builtPath)
+
+				if (routes.isDynamic(route)) {
+					config.logger.warnOnce(
+						`Dynamic paths cannot currently be built statically.` 
+						+ ` Please raise an issue at: https://github.com/coxmi/ssr-tools/issues`
+					)
+				} else if (routes.isStatic(route)) {
+					if (exported.staticPaths) {
+						config.logger.warnOnce(
+							`staticPaths was not used in "${route.module}"`
+							+ ` – use a dynamic file name to generate multiple pages`
+						)
+					}
+
+					const url = `/${chunkName}`
+					const matchedRoute = routes.matchRoute(url, route)
+					const props = getPageProps({ url, matchedRoute })
+					const output = await exported.default(props)
+					const parsed = await parseRouteResult(output, entrySrc)
+					if (parsed.headers['Content-Type'] === 'text/html') {
+						
+						// TODO: add scripts and styles to result from bundle manifest
+						const stylesheets: string[] = []
+
+						if (assets['style.css']) {
+							const src = '/' + assets['style.css'].fileName
+							stylesheets.push(`<link rel="stylesheet" href="${src}">`)
+						}
+
+						const scripts: string[] = []
+						if (assets['client.js']) {
+							const src = '/' + assets['client.js'].fileName
+							scripts.push(`<script src="${src}"></script>`)
+						}
+
+						let html = parsed.body
+						if (stylesheets.length) html = addToHead(html, stylesheets)
+						if (scripts.length) html = addToBody(html, scripts)
+						const outputPath = path.join(outputDir, chunkName + '.html')
+						emitFile(outputPath, html)
+					}					
+				}
+			}))
+		}
 	}
 }
 
@@ -206,7 +344,7 @@ export async function fileRouterMiddleware(configPathOrFolder: string = '') {
 
 	const manifest = JSON.parse(fs.readFileSync(settings.manifestPathAbsolute, 'utf8'))
 
-	const matchRoute = buildRoutes({
+	const routes = buildRoutes({
 		dir: settings.routerDirAbsolute,
 		files: glob.sync(settings.routerGlobAbsolute),
 		root: settings.root,
@@ -223,28 +361,27 @@ export async function fileRouterMiddleware(configPathOrFolder: string = '') {
 
 		const url = req.originalUrl
 		if (typeof url !== 'string') return next()
-		const matchedRoute = matchRoute(url)
+		const matchedRoute = routes.matchRoute(url)
 
 		/**
 		 * TODO:
 		 * • `style.css` is hardcoded when (build.cssCodeSplit === false) in vite.config.ts
 		 *    When true, we'll need to walk the graph of imports for css/js
 		 * 
-		 * • `client.js` will pull through from islands (double check title, may be better to be islands.js)
-		 * 
+		 * • `client.js` will pull through from islands plugins and client plugins
 		 */
 
 		// add scripts and styles to result from manifest
 		const stylesheets: string[] = []
 		if (manifest['style.css']) {
-			const src = '/' + manifest['style.css'].file
-			stylesheets.push(`<link rel="stylesheet" href="${src}">`)
+			const src = manifest['style.css'].file
+			stylesheets.push(`<link rel="stylesheet" href="/${src}">`)
 		}
 
 		const scripts: string[] = []
 		if (manifest['client.js']) {
-			const src = '/' + manifest['client.js'].file
-			scripts.push(`<script src="${src}"></script>`)
+			const src = manifest['client.js'].file
+			scripts.push(`<script src="/${src}"></script>`)
 		}
 
 		await requestHandler({
@@ -268,7 +405,8 @@ export async function fileRouterMiddleware(configPathOrFolder: string = '') {
 
 	// add assets
 	if (settings.assetsDirAbsolute) {
-		router.use('/assets', serveStatic(settings.assetsDirAbsolute))
+		const pathToAssets = '/' + path.relative(settings.outDirAbsolute, settings.assetsDirAbsolute)
+		router.use(pathToAssets, serveStatic(path.join(settings.outDirAbsolute, 'server', viteConfig.build.assetsDir)))
 	}
 
 	// add public directory
@@ -310,10 +448,10 @@ export function settingsFromConfig(config: ResolvedConfig, userOptions: FileRout
 
 
 function devMatchRoute(settings: SettingsFromConfig, url: string) {
-	const matchRoute = buildRoutes({
+	const routes = buildRoutes({
 		dir: settings.routerDirAbsolute,
 		files: glob.sync(settings.routerGlobAbsolute),
 		root: settings.root,
 	})
-	return matchRoute(url)
+	return routes.matchRoute(url)
 }
