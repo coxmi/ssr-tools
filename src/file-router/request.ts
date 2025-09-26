@@ -49,14 +49,14 @@ type RequestHandlerOptions = {
 
 type GetPagePropsArgs = {
 	url: string,
-	matchedRoute: MatchedRoute
+	routeParams: MatchedRoute['params']
 }
 
-export function getPageProps({ url, matchedRoute }: GetPagePropsArgs): PageProps {
+export function getPageProps({ url, routeParams }: GetPagePropsArgs): PageProps {
 	const [path, query] = url.split('?')
 	const props: PageProps = Object.freeze({
 		path: path,
-		params: matchedRoute.params ? Object.freeze({ ...matchedRoute.params }) : Object.freeze({}),
+		params: routeParams ? Object.freeze({ ...routeParams }) : Object.freeze({}),
 		query: new URLSearchParams(query),
 	})
 	return props
@@ -71,7 +71,7 @@ export async function requestHandler(opts: RequestHandlerOptions): Promise<boole
 		htmlTransform = async html => html,
 		ctx
 	} = opts
-	const props = getPageProps({ url, matchedRoute })
+	const props = getPageProps({ url, routeParams: matchedRoute.params })
 	const importPath = matchedRoute.route?.module
 	const errorImportPath = matchedRoute.route?.error?.module
 
@@ -92,11 +92,15 @@ export async function requestHandler(opts: RequestHandlerOptions): Promise<boole
 		}
 
 		const response = await handler(props)
-		const parsed = await parseRouteResult(response, importPath)
+		const parsed = await parseRouteResponse(response, importPath)
 		if (parsed.headers['Content-Type'] === 'text/html') {
 			ctx.res.setHeader('Content-Type', 'text/html')
-			ctx.res.end(await htmlTransform(parsed.body))
-			return true
+			if (parsed.body) {
+				const html = await htmlTransform(parsed.body)
+				ctx.res.end(html)
+			} else {
+				ctx.res.end()
+			}
 		}
 
 	} catch(err: unknown) {
@@ -121,7 +125,7 @@ export async function requestHandler(opts: RequestHandlerOptions): Promise<boole
 			if (typeof errorHandler !== 'function') {
 				ctx.res.statusCode = 500
 				ctx.res.end()
-				const errorRoute = (matchedRoute.route?.error || matchedRoute.defaultError)
+				const errorRoute = matchedRoute.route?.error
 				if (!errorRoute) throw new RequestError(500, errors.ERROR_ROUTE_NOT_FOUND, `Error route not found`)
 				const message = `Default export for route "${errorRoute.module}" must be callable`
 				throw new RequestError(500, errors.DEFAULT_EXPORT_NOT_CALLABLE, message)
@@ -132,10 +136,14 @@ export async function requestHandler(opts: RequestHandlerOptions): Promise<boole
 			}
 
 			const response = await errorHandler(errorProps)
-			const parsed = await parseRouteResult(response, errorImportPath)
+			const parsed = await parseRouteResponse(response, errorImportPath)
 			if (parsed.headers['Content-Type'] === 'text/html') {
 				ctx.res.setHeader('Content-Type', 'text/html')
-				ctx.res.end(await htmlTransform(parsed.body))
+				if (parsed.body) {
+					ctx.res.end(await htmlTransform(parsed.body))
+				} else {
+					ctx.res.end()
+				}
 				return true
 			}
 			return false
@@ -157,18 +165,30 @@ export async function requestHandler(opts: RequestHandlerOptions): Promise<boole
 
 const { default: renderToString } = await importUserModule('preact-render-to-string/jsx')
 
-type ParsedRouteResult = {
+export type ParsedRouteResult = {
 	headers: Record<string, string>
 	end: Boolean
-	body: string
+	body: string | undefined
+	ext: string | undefined
 }
 
-export async function parseRouteResult(input: any, name?: string): Promise<ParsedRouteResult | never> {
+export async function parseRouteResponse(input: any, name?: string) : Promise<ParsedRouteResult | never> {
+	const result = await _parseRouteResponse(input, name)
+	const mimeType = result.headers['Content-Type']
+	const ext = mimeTypes[mimeType]
+	return {
+		...result, 
+		ext 
+	}
+}
+
+export async function _parseRouteResponse(input: any, name?: string): Promise<ParsedRouteResult | never> {
 
 	const parsed: ParsedRouteResult = {
 		headers: {},
 		end: false,
-		body: '',
+		body: undefined,
+		ext: undefined
 	}
 	
 	// 404: nothing returned or user explicitly returned false, null, or undefined
@@ -215,4 +235,14 @@ const logError = (err: unknown) => {
 	} else if (err instanceof Error) {
 		console.log(err)
 	}
+}
+
+const mimeTypes: Record<string, string> = {
+	'text/plain': '',
+	'text/html': 'html',
+	'text/javascript': 'js',
+	'text/css': 'css',
+	'text/csv': 'csv',
+	'text/calendar': 'ics',
+  	'application/json': 'json'
 }

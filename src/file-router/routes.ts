@@ -3,19 +3,21 @@ import globToRegexp from 'glob-to-regexp'
 import { pathToRegexp, match } from 'path-to-regexp'
 import type { ParamData } from 'path-to-regexp'
 
-const routeComplexity = {
+const ROUTE_COMPLEXITY = {
 	STATIC: 1,
 	DYNAMIC: 2,
 	DYNAMIC_SPREAD: 3,
 }
 
 export type Route = {
+	name: string
 	module: string
 	routepath: string
 	parts: string[]
-	order: typeof routeComplexity[keyof typeof routeComplexity],
+	type: 'static' | 'dynamic' | 'dynamic-spread'
+	order: typeof ROUTE_COMPLEXITY[keyof typeof ROUTE_COMPLEXITY]
 	match: ReturnType<typeof match>
-	regexp?: RegExp,
+	regexp?: RegExp
 	error: ErrorRoute | undefined
 }
 
@@ -28,13 +30,11 @@ export type ErrorRoute = {
 export type MatchedRoute = {
 	route: Route | undefined
 	params: ParamData
-	defaultError: ErrorRoute | undefined
 }
 
 export type BuildRoutesArgs = {
     files: string[]
     dir: string
-    root: string
     remapFiles?: (path: string) => string | false
 }
 
@@ -49,10 +49,10 @@ const catchAllSectionMatch = /^\[\.{3}.+\]/
  * build a list of routes to match against URLs.
  * To test the built routes against live URLs use `matchRoute(path, routes)`
  */
-export function buildRoutes({ files, dir, root, remapFiles }: BuildRoutesArgs) {
+export function buildRoutes({ files, dir, remapFiles }: BuildRoutesArgs) {
     
-    if (!root.startsWith('/') || !dir.startsWith('/'))
-    	throw new Error(`'root' and 'dir' must be absolute paths`)
+    if (!dir.startsWith('/'))
+    	throw new Error(`'dir' must be an absolute path`)
 
     const routes: Route[] = []
     const errorRoutes: ErrorRoute[] = []
@@ -71,11 +71,10 @@ export function buildRoutes({ files, dir, root, remapFiles }: BuildRoutesArgs) {
 			throw new Error(`'remapFiles' must return an absolute path. Returned "${absPath}" for "${file}"`)
 		}
 
-    	// absolute path localised to pages dir, without extension
-    	// e.g. /home
-        const filepath = file
-            .replace(dirMatch, '')
-            .replace(extensionMatch, '')
+    	// absolute path localised to router dir (e.g. /:slug/index.ts)
+    	// and without extension (e.g. /:slug/index)
+    	const filepathExt = file.replace(dirMatch, '')
+        const filepath = filepathExt.replace(extensionMatch, '')
 
         const pathParts = filepath.split('/').slice(1)
 
@@ -94,24 +93,25 @@ export function buildRoutes({ files, dir, root, remapFiles }: BuildRoutesArgs) {
         const ignore = pathParts.find(part => part.startsWith('_'))
         if (ignore) continue
 
-        routes.push(createRoute(absPath, pathParts))
+        routes.push(createRoute(filepathExt, absPath, pathParts))
     }
-
+    
+    // add error property to routes, using default error handler
+    const defaultError = findErrorRoute(errorRoutes, ['index'])
     for (const route of routes) {
-    	route.error = findErrorRoute(errorRoutes, route.parts)
+    	route.error = findErrorRoute(errorRoutes, route.parts) || defaultError
     }
 
     routes.sort((a, b) => Math.sign(a.order - b.order))
 
     const template: MatchedRoute = {
     	route: undefined,
-    	params: {},
-    	defaultError: findErrorRoute(errorRoutes, ['index'])
+    	params: {}
     }
 
-    const routesByModuleId: Record<string, Route> = {}
+    const routesByFile: Record<string, Route> = {}
     for (const route of routes) {
-    	routesByModuleId[route.module] = route
+    	routesByFile[route.module] = route
     }
 
     return {
@@ -137,30 +137,24 @@ export function buildRoutes({ files, dir, root, remapFiles }: BuildRoutesArgs) {
 	    	}
 	    	return structuredClone(template)
 	    },
-	    findModuleRoute: function(file: string): Route | null {
-	    	return routesByModuleId[file] || null
-	    },
-	    isStatic: function(route: Route) {
-	    	return route.order === routeComplexity.STATIC
-	    },
-	    isDynamic: function(route: Route) {
-	    	return (
-	    		(route.order === routeComplexity.DYNAMIC) 
-	    		|| (route.order === routeComplexity.DYNAMIC_SPREAD)
-	    	)
+	    findRouteByFile: function(file: string): Route | null {
+	    	return routesByFile[file] || null
 	    },
     }
 }
 
 
-function createRoute(absPath: string, pathParts: string[]) {
+function createRoute(name: string, absPath: string, pathParts: string[]) {
+	
 	const route: Route = {
+		name: name,
 		module: absPath,
 	    routepath: '',
 	    parts: pathParts,
-	    order: routeComplexity.STATIC,
-	    error: undefined,
-	    match: () => false
+	    type: 'static',
+	    order: ROUTE_COMPLEXITY.STATIC,
+	    match: () => false,
+	    error: undefined
 	}
 
 	for (let i = 0; i < pathParts.length; i++) {
@@ -169,12 +163,14 @@ function createRoute(absPath: string, pathParts: string[]) {
 	    
 	    // match routes in order of complexity (static, dynamic, spread)
 	    // also multiply by depth (i) so dynamic root parts are at the end
-	    const maxDepth = 100
-	    if (route.order < routeComplexity.DYNAMIC && isDynamicPart && !part.startsWith('[...')) {
-	    	route.order = routeComplexity.DYNAMIC + (i/-maxDepth)
+	    const maxDirectoryDepth = 100
+	    if (route.order < ROUTE_COMPLEXITY.DYNAMIC && isDynamicPart && !part.startsWith('[...')) {
+	    	route.order = ROUTE_COMPLEXITY.DYNAMIC + (i/-maxDirectoryDepth)
+	    	route.type = 'dynamic'
 	    }
-	    if (route.order < routeComplexity.DYNAMIC_SPREAD && part.startsWith('[...')) {
-	    	route.order = routeComplexity.DYNAMIC_SPREAD + (i/-maxDepth)
+	    if (route.order < ROUTE_COMPLEXITY.DYNAMIC_SPREAD && part.startsWith('[...')) {
+	    	route.order = ROUTE_COMPLEXITY.DYNAMIC_SPREAD + (i/-maxDirectoryDepth)
+	    	route.type = 'dynamic-spread'
 	    }
 
 		// Remove square brackets at the start and end
@@ -211,6 +207,7 @@ function createRoute(absPath: string, pathParts: string[]) {
 	return route
 }
 
+const isDynamicSegment = (s: string) => /\[.+\]/.test(s)
 
 function findErrorRoute(errorRoutes: ErrorRoute[], parts: string[]): ErrorRoute | undefined {
 	const dirParts = parts.slice(0, -1)
@@ -221,5 +218,13 @@ function findErrorRoute(errorRoutes: ErrorRoute[], parts: string[]): ErrorRoute 
 	if (dirParts.length) findErrorRoute(errorRoutes, dirParts)
 }
 
+export function isStatic(route: Route) {
+	return route.order === ROUTE_COMPLEXITY.STATIC
+}
 
-const isDynamicSegment = (s: string) => /\[.+\]/.test(s)
+export function isDynamic(route: Route) {
+	return (
+		(route.order === ROUTE_COMPLEXITY.DYNAMIC) 
+		|| (route.order === ROUTE_COMPLEXITY.DYNAMIC_SPREAD)
+	)
+}
