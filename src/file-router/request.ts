@@ -50,16 +50,17 @@ type RequestHandlerOptions = {
 type GetPagePropsArgs = {
 	url: string,
 	routeParams: MatchedRoute['params']
+	props: Record<string, any>
 }
 
-export function getPageProps({ url, routeParams }: GetPagePropsArgs): PageProps {
+export function getPageProps({ url, routeParams, props = {} }: GetPagePropsArgs): PageProps {
 	const [path, query] = url.split('?')
-	const props: PageProps = Object.freeze({
+	return Object.freeze({
 		path: path,
 		params: routeParams ? Object.freeze({ ...routeParams }) : Object.freeze({}),
 		query: new URLSearchParams(query),
+		props
 	})
-	return props
 }
 
 export async function requestHandler(opts: RequestHandlerOptions): Promise<boolean> {
@@ -71,7 +72,7 @@ export async function requestHandler(opts: RequestHandlerOptions): Promise<boole
 		htmlTransform = async html => html,
 		ctx
 	} = opts
-	const props = getPageProps({ url, routeParams: matchedRoute.params })
+	const props = getPageProps({ url, routeParams: matchedRoute.params, props: {} })
 	const importPath = matchedRoute.route?.module
 	const errorImportPath = matchedRoute.route?.error?.module
 

@@ -283,8 +283,11 @@ export function fileRouter(opts: FileRouterUserOptions): PluginOption {
 					return html
 				}
 			})
-			
-			await proc.write(settings.staticBuildDirAbsolute)
+
+			await proc.write(
+				settings.staticBuildDirAbsolute,
+				settings.buildDirAbsolute
+			)
 		}
 	}
 }

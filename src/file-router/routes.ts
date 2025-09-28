@@ -1,12 +1,11 @@
 import { join } from 'node:path'
 import globToRegexp from 'glob-to-regexp'
 import { pathToRegexp, match } from 'path-to-regexp'
-import type { ParamData } from 'path-to-regexp'
 
 const ROUTE_COMPLEXITY = {
-	STATIC: 1,
-	DYNAMIC: 2,
-	DYNAMIC_SPREAD: 3,
+	static: 1,
+	single: 2,
+	multiple: 3,
 }
 
 export type Route = {
@@ -14,12 +13,24 @@ export type Route = {
 	module: string
 	routepath: string
 	parts: string[]
-	type: 'static' | 'dynamic' | 'dynamic-spread'
+	requiredParams: Record<string, Exclude<keyof typeof ROUTE_COMPLEXITY, 'static'>>
+	type: keyof typeof ROUTE_COMPLEXITY
 	order: typeof ROUTE_COMPLEXITY[keyof typeof ROUTE_COMPLEXITY]
-	match: ReturnType<typeof match>
+	match: MatchFn
+	matchParams: MatchParamsFn
 	regexp?: RegExp
 	error: ErrorRoute | undefined
 }
+
+type ParamData = Record<string, string | string[] | undefined>
+
+type MatchedOutput = {
+	path: string
+	params: ParamData
+}
+
+type MatchFn = (url: string) => false | MatchedOutput
+type MatchParamsFn = (params: ParamData) => false | never | MatchedOutput
 
 export type ErrorRoute = {
 	module: string	
@@ -151,9 +162,11 @@ function createRoute(name: string, absPath: string, pathParts: string[]) {
 		module: absPath,
 	    routepath: '',
 	    parts: pathParts,
+	    requiredParams: {},
 	    type: 'static',
-	    order: ROUTE_COMPLEXITY.STATIC,
+	    order: ROUTE_COMPLEXITY.static,
 	    match: () => false,
+	    matchParams: () => false,
 	    error: undefined
 	}
 
@@ -164,13 +177,13 @@ function createRoute(name: string, absPath: string, pathParts: string[]) {
 	    // match routes in order of complexity (static, dynamic, spread)
 	    // also multiply by depth (i) so dynamic root parts are at the end
 	    const maxDirectoryDepth = 100
-	    if (route.order < ROUTE_COMPLEXITY.DYNAMIC && isDynamicPart && !part.startsWith('[...')) {
-	    	route.order = ROUTE_COMPLEXITY.DYNAMIC + (i/-maxDirectoryDepth)
-	    	route.type = 'dynamic'
+	    if (route.order < ROUTE_COMPLEXITY.single && isDynamicPart && !part.startsWith('[...')) {
+	    	route.order = ROUTE_COMPLEXITY.single + (i/-maxDirectoryDepth)
+	    	route.type = 'single'
 	    }
-	    if (route.order < ROUTE_COMPLEXITY.DYNAMIC_SPREAD && part.startsWith('[...')) {
-	    	route.order = ROUTE_COMPLEXITY.DYNAMIC_SPREAD + (i/-maxDirectoryDepth)
-	    	route.type = 'dynamic-spread'
+	    if (route.order < ROUTE_COMPLEXITY.multiple && part.startsWith('[...')) {
+	    	route.order = ROUTE_COMPLEXITY.multiple + (i/-maxDirectoryDepth)
+	    	route.type = 'multiple'
 	    }
 
 		// Remove square brackets at the start and end
@@ -190,8 +203,10 @@ function createRoute(name: string, absPath: string, pathParts: string[]) {
 	    
 	    if (isDynamicPart) {
 	    	if (catchAllSectionMatch.test(part)) {
+	    		route.requiredParams[normalizedPart] = 'multiple'
 	    		route.routepath += `/*${normalizedPart}`
 	    	} else {
+	    		route.requiredParams[normalizedPart] = 'single'
 	    		route.routepath += `/:${normalizedPart}`
 	    	}
 	    } else {
@@ -202,6 +217,8 @@ function createRoute(name: string, absPath: string, pathParts: string[]) {
 	route.match = match(route.routepath, { 
 		decode: decodeURIComponent 
 	})
+
+	route.matchParams = (params: ParamData) => validateParams(params, route)
 
 	route.regexp = pathToRegexp(route.routepath).regexp
 	return route
@@ -219,12 +236,138 @@ function findErrorRoute(errorRoutes: ErrorRoute[], parts: string[]): ErrorRoute 
 }
 
 export function isStatic(route: Route) {
-	return route.order === ROUTE_COMPLEXITY.STATIC
+	return route.type === 'static'
 }
 
 export function isDynamic(route: Route) {
 	return (
-		(route.order === ROUTE_COMPLEXITY.DYNAMIC) 
-		|| (route.order === ROUTE_COMPLEXITY.DYNAMIC_SPREAD)
+		(route.type === 'single') 
+		|| (route.type === 'multiple')
 	)
+}
+
+function segmentDisallowedChars(segment: string): string[] {
+	const regexp = /[\\\/\?\#]/g
+	return [...segment.matchAll(regexp)].map(match => match[0])
+}
+
+function onlyUnique<T>(value: T, index: number, array: T[]) {
+  return array.indexOf(value) === index
+}
+
+function arrayDisallowedChars(array: string[]): string[] {
+	let disallowed: string[] = []
+	array.map(segment => {
+		const chars = segmentDisallowedChars(segment)
+		disallowed.push(...chars)
+	})
+	return disallowed.filter(onlyUnique)
+}
+
+function validateParams(params: ParamData, route: Route): never | MatchedOutput {
+
+	const errors: Record<string, boolean> = {}
+	const outputParams: ParamData = {}
+	let reifiedPath = route.routepath
+
+	for (const param in route.requiredParams) {
+		const type = route.requiredParams[param]
+		const value = params[param]
+
+		if (!(param in params)) {
+			errors[`"${param}" not found`] = true
+			continue
+		}
+
+		if (type === 'multiple') {
+			const isStringArray = Array.isArray(value) && value.every(x => typeof x === 'string')
+			if (!isStringArray) {
+				errors[`"${param}" must be an array of strings`] = true
+				continue
+			}
+			const disallowedChars = arrayDisallowedChars(value)
+			if (disallowedChars.length) {
+				const s = disallowedChars.length === 1 ? '' : 's'
+				const chars = '"' + disallowedChars.join(', ') + '"'
+				errors[
+					`Segment for "${param}" includes disallowed character${s} ${chars} in url params: ` +
+					`["${value.join('", "')}"]`
+				] = true
+				continue
+			}
+			reifiedPath = reifiedPath.replace(`*${param}`, value.join('/'))
+
+		} else if (type === 'single') {
+			 if (typeof value !== 'string') {
+				errors[`"${param}" must be a string`] = true
+				continue
+			}
+
+			const disallowedChars = segmentDisallowedChars(value)
+			if (disallowedChars.length) {
+				const s = disallowedChars.length === 1 ? '' : 's'
+				const chars = '"' + disallowedChars.join(', ') + '"'
+				errors[
+					`Segment for "${param}" includes disallowed character${s} ${chars} in url params: ` +
+					`["${value}"]`
+				] = true
+				continue
+			}
+			reifiedPath = reifiedPath.replace(`:${param}`, value)
+		}
+
+		outputParams[param] = value
+	}
+
+	const errs = Object.keys(errors)
+	if (errs.length) {
+		throw new Error(errs.join(', '))
+	}
+
+	return {
+		path: reifiedPath,
+		params: outputParams
+	}
+}
+
+export function regexes(segments: Array<RegExp|string>, flags?: string) {
+    return new RegExp(
+        segments.map(segment => {
+            if (segment instanceof RegExp) return segment.source
+            return segment.toString()
+        }).join(''),
+        flags
+    )
+}
+
+const permalinkPattern:RegExp = regexes(
+    [
+        // just a root path: "/",
+        /^\/$|/,
+        // or:
+            // negative lookahead across pattern
+            // to catch likely mistakes
+            `^(?!`,
+                // disallow more than double dots everywhere
+                /.*\.{3,}.*|/,
+                // disallow double dots at start of files
+                /.*\.{2,}(?!\/|$)/,
+            `)`,
+            // start with slash
+            /\//,
+            // path segment, 1 or more
+            `(?:`,
+                // standard limited characters
+                /[a-z0-9-_.]+/,
+                // optional trailing slash
+                /\/?/,
+            `)+`,
+        // end (discounts ?query, #hash, etc.)
+        /$/
+    ],
+    'i'
+)
+
+function validateUrl(permalink: string): boolean {
+    return permalinkPattern.test(permalink)   
 }
