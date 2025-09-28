@@ -35,12 +35,12 @@ Import components as islands with a simple import:
 ```ts
 import { ComplexComponent } from './button.ts?island'
 
-// props are automatically serialised and a client-side bundle is 
+// basic props are automatically serialised and a client-side bundle is 
 // added to the manifest, with only the used island components
 <ComplexComponent name={'my-component'} />
 ```
 
-By default this works with Preact only, but the provider interface is simple enough that you can build one yourself for other frameworks ([see Preact example](https://github.com/coxmi/ssr-tools/tree/main/src/islands/providers/preact)). Just pass in your provider in your `vite.config.ts`:
+By default this works with Preact only, but the provider interface is simple enough that you can build one yourself for other frameworks ([see Preact example](https://github.com/coxmi/ssr-tools/tree/main/src/islands/providers/preact)). Just pass in your provider in `vite.config.ts`:
 
 ```ts
 islands({
@@ -63,11 +63,7 @@ islands({
 Import anything directly into the client bundle:
 
 ```ts
-import from './client.ts?client'
-
-// props are automatically serialised and a client-side bundle is 
-// added to the manifest, with only the used island components
-<ComplexComponent name={'my-component'} />
+import './client.ts?client'
 ```
 
 ### `fileRouter()`
@@ -192,4 +188,4 @@ Contributions welcome!
 
 
 # Acknowledgements 
-Adapted from [vite-plugin-voie](https://github.com/brattonross/vite-plugin-voie), and [barelyhuman](https://github.com/barelyhuman)'s [preact-island-plugins](https://github.com/barelyhuman/preact-island-plugins).
+islands plugin adapted from [vite-plugin-voie](https://github.com/brattonross/vite-plugin-voie), and [barelyhuman](https://github.com/barelyhuman)'s [preact-island-plugins](https://github.com/barelyhuman/preact-island-plugins).
