@@ -1,6 +1,4 @@
-```
-Note: this is a work in progress
-```
+<pre>Note: This library is a work in progress</pre>
 
 # ssr-tools
 
