@@ -98,11 +98,11 @@ defineConfig({
 ```ts
 
 export default function page(ctx) {
-	return `<html>
-		<body>
-			<h1>${ctx.params.slug}</h1>
-		</body>
-	</html>`
+   return `<html>
+      <body>
+         <h1>${ctx.params.slug}</h1>
+      </body>
+   </html>`
 }
 ```
 
@@ -114,7 +114,7 @@ import { fileRouterMiddleware } from 'ssr-tools'
 
 const fileRouter = await fileRouterMiddleware()
 const app = http.createServer((req, res) => {
-	fileRouter(req, res, () => res.end())
+   fileRouter(req, res, () => res.end())
 })
 app.listen(port)	
 	
@@ -151,8 +151,8 @@ To render static pages, Export a `build` object to your route:
 ```ts
 
 export default build = {
-	// return an iterable, and a page will
-	// be generated for each entry
+   // return an iterable, and a page will
+   // be generated for each entry
    from: await getPages()
    
    // specify your url params
@@ -164,11 +164,11 @@ export default build = {
 
 // render the content from `ctx.props`
 export default function page(ctx) {
-	return `<html>
-		<body>
-			<h1>${ctx.props.title}</h1>
-		</body>
-	</html>`
+   return `<html>
+      <body>
+         <h1>${ctx.props.title}</h1>
+      </body>
+   </html>`
 }
 ```
 
