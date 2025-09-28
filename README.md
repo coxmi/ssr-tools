@@ -1,6 +1,12 @@
+```
+Note: this is a work in progress
+```
+
 # ssr-tools
 
 Some tools to use in SSR-rendered apps, designed primarily around islands, vite, and a next-style file router.
+
+
 
 
 ### Using vite:
@@ -67,10 +73,6 @@ import from './client.ts?client'
 ```
 
 ### `fileRouter()`
-
-```
-Note: this is a work in progress
-```
 
 A Next-style file router. To start, add the plugin and define a route:
 
@@ -186,6 +188,9 @@ export default function page(ctx) {
 
 
 
+# Contributing
+
+Contributions welcome!
 
 
 # Acknowledgements 
