@@ -1,6 +1,6 @@
 {
   "name": "ssr-tools",
-  "version": "0.0.29",
+  "version": "0.0.30",
   "description": "A collection of tools to use in SSR rendering",
   "license": "MIT",
   "author": "Michael Cox",
