@@ -47,8 +47,8 @@ islands({
    provider: {
      ssr: {
        name: 'name-of-export',
-       importFrom: 'path/that/resolves/to/ssr/wrapper'
-       importNamed: true | false
+       importFrom: 'path/that/resolves/to/ssr/wrapper',
+       importNamed: true || false
      },
      bundle: ({ imports, variables, code }) => `
        // client bundle content goes here
