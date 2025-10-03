@@ -66,8 +66,6 @@
     "vite": ">=5"
   },
   "dependencies": {
-    "@babel/generator": "^7.23.4",
-    "@babel/parser": "^7.23.4",
     "@barelyhuman/astring-jsx": "^2.0.1",
     "acorn": "^8.11.2",
     "acorn-jsx": "^5.3.2",

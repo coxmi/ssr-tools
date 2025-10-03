@@ -6,7 +6,7 @@ import { sha } from './../utility/crypto.ts'
 import { bundlePlugin, findBundleApi } from './bundlePlugin.ts'
 
 import type { BundlePublicAPI, BundleStringifier } from './bundlePlugin.ts'
-import type { Plugin, ResolvedConfig } from 'vite'
+import type { PluginOption, ResolvedConfig } from 'vite'
 
 
 export type UserOptions = {
@@ -28,7 +28,7 @@ type DescribeImport = {
 /**
  * Vite plugin to allow SSR islands
  */
-export function islands(userOptions: UserOptions = {}): Plugin[] {
+export function islands(userOptions: UserOptions = {}): PluginOption {
 
 	let bundleApi: BundlePublicAPI
 	// TODO: this hardcodes the title of the js output file

@@ -1,11 +1,11 @@
 import { bundlePlugin, findBundleApi } from './bundlePlugin.ts'
 import type { BundlePublicAPI } from './bundlePlugin.ts'
-import type { Plugin, ResolvedConfig } from 'vite'
+import type { PluginOption, ResolvedConfig } from 'vite'
 
 /**
  * Vite plugin to allow importing client code into the bundle directly from SSR realm
  */
-export function client(): Plugin[] {
+export function client(): PluginOption {
 
 	let bundleApi: BundlePublicAPI
 	const bundleName = 'client'
