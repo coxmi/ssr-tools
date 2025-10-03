@@ -12,6 +12,7 @@ import { requestHandler } from './../file-router/request.ts'
 import { devStyles, findConfigFile, toAbsolutePath } from './utility.ts'
 import { isObject } from './../utility/object.ts'
 import { sha } from './../utility/crypto.ts'
+import { ssrHotModuleReload } from './ssrHotModuleReload.ts'
 
 import type { CSS } from './utility.ts'
 import type { PluginOption, ResolvedConfig } from 'vite'
@@ -58,238 +59,241 @@ export function fileRouter(opts: FileRouterUserOptions): PluginOption {
 	const stylesheets = new Map<string, CSS[]>()
 	let matchFiles: RegExp
 
-	return {
-		name: 'ssr-tools:file-router',
-		enforce: 'post',
+	return [
+		ssrHotModuleReload(),
+		{
+			name: 'ssr-tools:file-router',
+			enforce: 'post',
 
-		api: {
-			userOptions: () => userOptions
-		},
+			api: {
+				userOptions: () => userOptions
+			},
 
-		config(config) {
+			config(config) {
 
-			// add all matching glob files to rollupOptions
-			const root = config.root || process.cwd()
-			const routerDirAbsolute = toAbsolutePath(userOptions.dir, root)
-			const routerGlobAbsolute = toAbsolutePath(userOptions.glob, routerDirAbsolute)
+				// add all matching glob files to rollupOptions
+				const root = config.root || process.cwd()
+				const routerDirAbsolute = toAbsolutePath(userOptions.dir, root)
+				const routerGlobAbsolute = toAbsolutePath(userOptions.glob, routerDirAbsolute)
 
-			// save regex to test file paths later
-			matchFiles = globToRegexp(routerGlobAbsolute, { 
-				extended: true,
-				globstar: true
-			})
-
-			// remap entry file names to /server/[default] if the files are part of the glob
-			// use getDefaultChunkOption to simplify output fns below
-			const getDefaultChunkOption = function(x: string | ((arg: any) => string), chunk: any): string {
-				return typeof x === 'function' ? x(chunk) : x
-			}
-			// @ts-ignore
-			const defaultEntryFileNames = config.build?.rollupOptions?.output?.entryFileNames || '[name].js'
-			// @ts-ignore
-			const defaultChunkFileNames = config.build?.rollupOptions?.output?.chunkFileNames || '[name]-[hash].js'
-
-			return {
-				build: {
-					// requires manifest for serving files in build
-					manifest: true,
-					// requires ssr assets for included image, style, and script assets
-					ssrEmitAssets: true,
-					rollupOptions: {
-						// include the routes as entrypoints
-						input: glob.sync(routerGlobAbsolute),
-						// if files are routes, send them to server output folder, 
-						// otherwise use the previously defined config options
-						output: {
-							entryFileNames: chunk => {
-								let name = ''
-								if (chunk.facadeModuleId && matchFiles.test(chunk.facadeModuleId)) name += "server/"
-								name += getDefaultChunkOption(defaultEntryFileNames, chunk)
-								return name
-							},
-							chunkFileNames: chunk => {
-								return "server/chunks/" + getDefaultChunkOption(defaultChunkFileNames, chunk)
-							}
-						}
-					},
-				}
-			}
-		},
-
-		configResolved(resolvedConfig) {
-			config = resolvedConfig
-			settings = settingsFromConfig(resolvedConfig, userOptions)
-		},
-
-		/** 
-		 * adds ssr css to page when in dev mode
-		 */
-		async transformIndexHtml(html, ctx) {
-			if (!ctx.server) return
-
-			// TODO: [...all.ts] also matches on .well-known/ and other dotfiles
-			// what's the preferred solution to this?
-			const matched = devMatchRoute(settings, ctx.path)
-			if (!matched.route) return
-
-			const importedModules = ctx.server.moduleGraph.getModulesByFile(matched.route.module)
-			if (!importedModules) return
-
-			// save stylesheets indexed per route for use in load hook
-			const id = sha(ctx.path)
-			const css = await devStyles(importedModules, ctx.server)
-			stylesheets.set(id, css)
-
-			return [
-				// remove the FOUC by including styles statically on first load
-				{
-					tag: 'link',
-					attrs: {
-						rel: 'stylesheet',
-						href: `/@file-router-styles.css?v=${id}`,
-					},
-					injectTo: 'head'
-				},
-				// returns js imports, so vite handles css hmr as standard
-				// the initial stylesheet is removed on load
-				{
-					tag: 'script',
-					attrs: {
-						type: 'module',
-						src: `/@file-router-styles-dev?v=${id}`,
-					},
-					injectTo: 'body'
-				}
-			]
-		},
-
-		load(id, options) {
-			if (options?.ssr) return
-			const getStylesheets = (id: string) => {
-				const sha = new URLSearchParams(id.split('?').pop()).get('v') || ''
-				return stylesheets.get(sha) || []
-			}
-			if (id.startsWith('/@file-router-styles-dev?')) {
-				return getStylesheets(id)
-					.map(sheet => `import "${sheet.file}"`)
-					.join('\n')
-					+ `
-					if (import.meta.hot) {
-						const initial = document.querySelector('link[href^="/@file-router-styles.css"]')
-						initial.remove()
-					}
-					`.replaceAll(/^\t{5}/gm, '')
-			}
-			if (id.startsWith('/@file-router-styles.css?')) {
-				return getStylesheets(id).map(sheet => sheet.css).join('\n')
-			}
-		},
-
-		configureServer(server) {
-
-	    	server.watcher.add([
-	    		settings.routerDirAbsolute, 
-	    		settings.routerGlobAbsolute
-	    	])
-
-	    	if (userOptions.removeTrailingSlash) {
-	    		server.middlewares.use(middleware.removeTrailingSlash)
-	    	}
-
-			return () => {
-				server.middlewares.use(async (req, res, next) => {
-					const url = req.originalUrl
-					if (typeof url !== 'string') return next()
-					const matchedRoute = devMatchRoute(settings, url)
-					await requestHandler({
-						url,
-						matchedRoute,
-						importer: server.ssrLoadModule,
-						htmlTransform: html => server.transformIndexHtml(url, html),
-						ctx: { req, res, next }
-					})
+				// save regex to test file paths later
+				matchFiles = globToRegexp(routerGlobAbsolute, { 
+					extended: true,
+					globstar: true
 				})
-			}
-		},
 
-		async writeBundle(options, bundle) {
-
-			// copy assets to server directory
-			fs.cpSync(
-				settings.assetsDirAbsolute, 
-				settings.ssrAssetsDirAbsolute,
-				{ recursive: true }
-			);
-
-			// remove the top-level assets directory later, after we've moved 
-			// or copied it to ssr and static
-			const toRemove = path.join(settings.buildDirAbsolute, config.build.assetsDir.split('/')[0])
-			const remove = () => fs.rmSync(toRemove, { recursive: true, force: true })
-			
-			// gather chunks and assets from bundle
-			const chunks: OutputChunk[] = []
-			const assets: Record<string, OutputAsset> = {}
-			for (const file of Object.values(bundle)) {
-				if (file.type === 'asset' && file.names[0]) {
-					assets[file.names[0]] = file
+				// remap entry file names to /server/[default] if the files are part of the glob
+				// use getDefaultChunkOption to simplify output fns below
+				const getDefaultChunkOption = function(x: string | ((arg: any) => string), chunk: any): string {
+					return typeof x === 'function' ? x(chunk) : x
 				}
-				if (file.type === 'chunk' 
-					&& file.isEntry 
-					&& file.facadeModuleId 
-					&& matchFiles.test(file.facadeModuleId)) {
-					chunks.push(file)
+				// @ts-ignore
+				const defaultEntryFileNames = config.build?.rollupOptions?.output?.entryFileNames || '[name].js'
+				// @ts-ignore
+				const defaultChunkFileNames = config.build?.rollupOptions?.output?.chunkFileNames || '[name]-[hash].js'
+
+				return {
+					build: {
+						// requires manifest for serving files in build
+						manifest: true,
+						// requires ssr assets for included image, style, and script assets
+						ssrEmitAssets: true,
+						rollupOptions: {
+							// include the routes as entrypoints
+							input: glob.sync(routerGlobAbsolute),
+							// if files are routes, send them to server output folder, 
+							// otherwise use the previously defined config options
+							output: {
+								entryFileNames: chunk => {
+									let name = ''
+									if (chunk.facadeModuleId && matchFiles.test(chunk.facadeModuleId)) name += "server/"
+									name += getDefaultChunkOption(defaultEntryFileNames, chunk)
+									return name
+								},
+								chunkFileNames: chunk => {
+									return "server/chunks/" + getDefaultChunkOption(defaultChunkFileNames, chunk)
+								}
+							}
+						},
+					}
 				}
-			}
+			},
 
-			if (!chunks.length) return remove()
+			configResolved(resolvedConfig) {
+				config = resolvedConfig
+				settings = settingsFromConfig(resolvedConfig, userOptions)
+			},
 
-			// copy assets to static directory and delete original assets
-			fs.cpSync(settings.assetsDirAbsolute, settings.staticAssetsDirAbsolute, {recursive: true });
-			remove()
+			/** 
+			 * adds ssr css to page when in dev mode
+			 */
+			async transformIndexHtml(html, ctx) {
+				if (!ctx.server) return
 
-			// build routes for compilation
-			const routes = buildRoutes({
-				dir: settings.routerDirAbsolute,
-				files: glob.sync(settings.routerGlobAbsolute)
-			})
+				// TODO: [...all.ts] also matches on .well-known/ and other dotfiles
+				// what's the preferred solution to this?
+				const matched = devMatchRoute(settings, ctx.path)
+				if (!matched.route) return
 
-			// gather scripts and styles to result from bundle manifest
-			const stylesheets: string[] = []
-			if (assets['style.css']) {
-				const src = '/' + assets['style.css'].fileName
-				stylesheets.push(`<link rel="stylesheet" href="${src}">`)
-			}
-			const scripts: string[] = []
-			if (assets['client.js']) {
-				const src = '/' + assets['client.js'].fileName
-				scripts.push(`<script src="${src}"></script>`)
-			}
+				const importedModules = ctx.server.moduleGraph.getModulesByFile(matched.route.module)
+				if (!importedModules) return
 
-			const proc = new RouteBatchProcess()
+				// save stylesheets indexed per route for use in load hook
+				const id = sha(ctx.path)
+				const css = await devStyles(importedModules, ctx.server)
+				stylesheets.set(id, css)
 
-			await Promise.all(chunks.map(async chunk => {
-				if (!chunk.facadeModuleId) return
-				const route = routes.findRouteByFile(chunk.facadeModuleId)
-				const compiledPath = path.join(settings.buildDirAbsolute, chunk.fileName)
-				if (!route) return
-				const exported = await import(compiledPath)
-				proc.add(route, exported)
-			}))
+				return [
+					// remove the FOUC by including styles statically on first load
+					{
+						tag: 'link',
+						attrs: {
+							rel: 'stylesheet',
+							href: `/@file-router-styles.css?v=${id}`,
+						},
+						injectTo: 'head'
+					},
+					// returns js imports, so vite handles css hmr as standard
+					// the initial stylesheet is removed on load
+					{
+						tag: 'script',
+						attrs: {
+							type: 'module',
+							src: `/@file-router-styles-dev?v=${id}`,
+						},
+						injectTo: 'body'
+					}
+				]
+			},
 
-			await proc.buildStatic({ 
-				htmlTransform: html => {
-					if (stylesheets.length)  html = addToHead(html, stylesheets)
-					if (scripts.length) html = addToBody(html, scripts)
-					return html
+			load(id, options) {
+				if (options?.ssr) return
+				const getStylesheets = (id: string) => {
+					const sha = new URLSearchParams(id.split('?').pop()).get('v') || ''
+					return stylesheets.get(sha) || []
 				}
-			})
+				if (id.startsWith('/@file-router-styles-dev?')) {
+					return getStylesheets(id)
+						.map(sheet => `import "${sheet.file}"`)
+						.join('\n')
+						+ `
+						if (import.meta.hot) {
+							const initial = document.querySelector('link[href^="/@file-router-styles.css"]')
+							initial.remove()
+						}
+						`.replaceAll(/^\t{5}/gm, '')
+				}
+				if (id.startsWith('/@file-router-styles.css?')) {
+					return getStylesheets(id).map(sheet => sheet.css).join('\n')
+				}
+			},
 
-			await proc.write(
-				settings.staticBuildDirAbsolute,
-				settings.buildDirAbsolute
-			)
+			configureServer(server) {
+
+		    	server.watcher.add([
+		    		settings.routerDirAbsolute, 
+		    		settings.routerGlobAbsolute
+		    	])
+
+		    	if (userOptions.removeTrailingSlash) {
+		    		server.middlewares.use(middleware.removeTrailingSlash)
+		    	}
+
+				return () => {
+					server.middlewares.use(async (req, res, next) => {
+						const url = req.originalUrl
+						if (typeof url !== 'string') return next()
+						const matchedRoute = devMatchRoute(settings, url)
+						await requestHandler({
+							url,
+							matchedRoute,
+							importer: server.ssrLoadModule,
+							htmlTransform: html => server.transformIndexHtml(url, html),
+							ctx: { req, res, next }
+						})
+					})
+				}
+			},
+
+			async writeBundle(options, bundle) {
+
+				// copy assets to server directory
+				fs.cpSync(
+					settings.assetsDirAbsolute, 
+					settings.ssrAssetsDirAbsolute,
+					{ recursive: true }
+				);
+
+				// remove the top-level assets directory later, after we've moved 
+				// or copied it to ssr and static
+				const toRemove = path.join(settings.buildDirAbsolute, config.build.assetsDir.split('/')[0])
+				const remove = () => fs.rmSync(toRemove, { recursive: true, force: true })
+				
+				// gather chunks and assets from bundle
+				const chunks: OutputChunk[] = []
+				const assets: Record<string, OutputAsset> = {}
+				for (const file of Object.values(bundle)) {
+					if (file.type === 'asset' && file.names[0]) {
+						assets[file.names[0]] = file
+					}
+					if (file.type === 'chunk' 
+						&& file.isEntry 
+						&& file.facadeModuleId 
+						&& matchFiles.test(file.facadeModuleId)) {
+						chunks.push(file)
+					}
+				}
+
+				if (!chunks.length) return remove()
+
+				// copy assets to static directory and delete original assets
+				fs.cpSync(settings.assetsDirAbsolute, settings.staticAssetsDirAbsolute, {recursive: true });
+				remove()
+
+				// build routes for compilation
+				const routes = buildRoutes({
+					dir: settings.routerDirAbsolute,
+					files: glob.sync(settings.routerGlobAbsolute)
+				})
+
+				// gather scripts and styles to result from bundle manifest
+				const stylesheets: string[] = []
+				if (assets['style.css']) {
+					const src = '/' + assets['style.css'].fileName
+					stylesheets.push(`<link rel="stylesheet" href="${src}">`)
+				}
+				const scripts: string[] = []
+				if (assets['client.js']) {
+					const src = '/' + assets['client.js'].fileName
+					scripts.push(`<script src="${src}"></script>`)
+				}
+
+				const proc = new RouteBatchProcess()
+
+				await Promise.all(chunks.map(async chunk => {
+					if (!chunk.facadeModuleId) return
+					const route = routes.findRouteByFile(chunk.facadeModuleId)
+					const compiledPath = path.join(settings.buildDirAbsolute, chunk.fileName)
+					if (!route) return
+					const exported = await import(compiledPath)
+					proc.add(route, exported)
+				}))
+
+				await proc.buildStatic({ 
+					htmlTransform: html => {
+						if (stylesheets.length)  html = addToHead(html, stylesheets)
+						if (scripts.length) html = addToBody(html, scripts)
+						return html
+					}
+				})
+
+				await proc.write(
+					settings.staticBuildDirAbsolute,
+					settings.buildDirAbsolute
+				)
+			}
 		}
-	}
+	]
 }
 
 /**
