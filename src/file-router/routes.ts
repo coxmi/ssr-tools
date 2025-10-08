@@ -1,21 +1,29 @@
 import { join } from 'node:path'
 import globToRegexp from 'glob-to-regexp'
 import { pathToRegexp, match } from 'path-to-regexp'
+import type { Prettify } from './../utility/types.ts'
 
-const ROUTE_COMPLEXITY = {
-	static: 1,
-	single: 2,
-	multiple: 3,
-}
+const paramTypes = Object.freeze({
+	SINGLE: 'single',
+	MULTIPLE: 'multiple',
+})
+
+const routeComplexity = Object.freeze({
+	BASIC: 1,
+	PARAMS: 2,
+	SPREAD: 3,
+})
+
+type Values<T> = Prettify<T[keyof T] & {}>
 
 export type Route = {
 	name: string
 	module: string
 	routepath: string
-	parts: string[]
-	requiredParams: Record<string, Exclude<keyof typeof ROUTE_COMPLEXITY, 'static'>>
-	type: keyof typeof ROUTE_COMPLEXITY
-	order: typeof ROUTE_COMPLEXITY[keyof typeof ROUTE_COMPLEXITY]
+	segments: string[]
+	requiredParams: Record<string, Values<typeof paramTypes>>
+	type: Values<typeof routeComplexity>
+	order: number,
 	match: MatchFn
 	matchParams: MatchParamsFn
 	regexp?: RegExp
@@ -34,12 +42,12 @@ type MatchParamsFn = (params: ParamData) => false | never | MatchedOutput
 
 export type ErrorRoute = {
 	module: string	
-	parts: string[]
+	segments: string[]
 	dir: string
 }
 
 export type MatchedRoute = {
-	route: Route | undefined
+	route: Route
 	params: ParamData
 }
 
@@ -53,12 +61,19 @@ export type BuildRoutesArgs = {
 // match only the final extension (to support route.foo.tsx -> route.foo)
 const extensionMatch = /\.[^\.]+$/
 
+// match any `[slug]` or '[...slug]' param segments 
+const paramSegmentMatch = /\[.+\]/
+
 // matches '[...slug]' url part
 const catchAllSectionMatch = /^\[\.{3}.+\]/
 
+// query strings
+const queryMatch = /\?.*$/
+
+
 /**
  * build a list of routes to match against URLs.
- * To test the built routes against live URLs use `matchRoute(path, routes)`
+ * To test the built routes against live URLs use `routes.matchRoute(path, routes)`
  */
 export function buildRoutes({ files, dir, remapFiles }: BuildRoutesArgs) {
     
@@ -82,43 +97,37 @@ export function buildRoutes({ files, dir, remapFiles }: BuildRoutesArgs) {
 			throw new Error(`'remapFiles' must return an absolute path. Returned "${absPath}" for "${file}"`)
 		}
 
-    	// absolute path localised to router dir (e.g. /:slug/index.ts)
-    	// and without extension (e.g. /:slug/index)
+    	// absolute path localised to router dir (e.g. /[slug]/index.ts)
+    	// and without extension (e.g. /[slug]/index)
     	const filepathExt = file.replace(dirMatch, '')
         const filepath = filepathExt.replace(extensionMatch, '')
+        const segments = filepath.split('/').slice(1)
 
-        const pathParts = filepath.split('/').slice(1)
-
-        const isErrorRoute = (pathParts[pathParts.length - 1] === '_error')
+        const isErrorRoute = (segments[segments.length - 1] === '_error')
         if (isErrorRoute) {
         	errorRoutes.push({
         		module: absPath,
-        		parts: pathParts,
-        		dir: join(...pathParts.slice(0, -1))
+        		segments: segments,
+        		dir: join(...segments.slice(0, -1))
         	})
         }
 
         // ignore files and folders starting with an underscore
         // to allow non-route files to exist in the folder structure
         // (e.g. layouts and shared js resources)
-        const ignore = pathParts.find(part => part.startsWith('_'))
+        const ignore = segments.find(part => part.startsWith('_'))
         if (ignore) continue
 
-        routes.push(createRoute(filepathExt, absPath, pathParts))
+        routes.push(createRoute(filepathExt, absPath, segments))
     }
     
     // add error property to routes, using default error handler
     const defaultError = findErrorRoute(errorRoutes, ['index'])
     for (const route of routes) {
-    	route.error = findErrorRoute(errorRoutes, route.parts) || defaultError
+    	route.error = findErrorRoute(errorRoutes, route.segments) || defaultError
     }
 
     routes.sort((a, b) => Math.sign(a.order - b.order))
-
-    const template: MatchedRoute = {
-    	route: undefined,
-    	params: {}
-    }
 
     const routesByFile: Record<string, Route> = {}
     for (const route of routes) {
@@ -128,12 +137,11 @@ export function buildRoutes({ files, dir, remapFiles }: BuildRoutesArgs) {
     return {
     	routes,
     	errorRoutes,
-    	matchRoute: function (path: string, route?: Route): MatchedRoute {
-	    	const withoutQuery = path.replace(/\?.*$/, '')
+    	matchRoute: function (path: string, route?: Route): MatchedRoute | false {
+	    	const withoutQuery = path.replace(queryMatch, '')
 	    	if (route) {
 	    		const matches = route.match(withoutQuery)
 	    		if (matches) return {
-	    			...structuredClone(template), 
 	    			route, 
 	    			params: matches.params,
 	    		}
@@ -141,12 +149,11 @@ export function buildRoutes({ files, dir, remapFiles }: BuildRoutesArgs) {
 	    	for (const route of routes) {
 	    		const matches = route.match(withoutQuery)
 	    		if (matches) return {
-	    			...structuredClone(template), 
 	    			route, 
 	    			params: matches.params,
 	    		}
 	    	}
-	    	return structuredClone(template)
+	    	return false
 	    },
 	    findRouteByFile: function(file: string): Route | null {
 	    	return routesByFile[file] || null
@@ -154,63 +161,69 @@ export function buildRoutes({ files, dir, remapFiles }: BuildRoutesArgs) {
     }
 }
 
-
-function createRoute(name: string, absPath: string, pathParts: string[]) {
+function createRoute(name: string, absPath: string, segments: string[]) {
 	
 	const route: Route = {
-		name: name,
+		name,
 		module: absPath,
 	    routepath: '',
-	    parts: pathParts,
+	    segments,
 	    requiredParams: {},
-	    type: 'static',
-	    order: ROUTE_COMPLEXITY.static,
+	    type: routeComplexity.BASIC,
+	    order: routeComplexity.BASIC,
 	    match: () => false,
 	    matchParams: () => false,
 	    error: undefined
 	}
 
-	for (let i = 0; i < pathParts.length; i++) {
-		const part = pathParts[i]
-	    const isDynamicPart = isDynamicSegment(part)
+	for (let i = 0; i < segments.length; i++) {
+		const part = segments[i]
+	    const isParamSegment = paramSegmentMatch.test(part)
 	    
-	    // match routes in order of complexity (static, dynamic, spread)
-	    // also multiply by depth (i) so dynamic root parts are at the end
+	    // match routes in order of complexity (basic, param, spread)
+	    // also multiply by depth (i) to factor in tree, 
+	    // making sure spread routes are at the end
 	    const maxDirectoryDepth = 100
-	    if (route.order < ROUTE_COMPLEXITY.single && isDynamicPart && !part.startsWith('[...')) {
-	    	route.order = ROUTE_COMPLEXITY.single + (i/-maxDirectoryDepth)
-	    	route.type = 'single'
+
+	    if (isParamSegment && !part.startsWith('[...')) {
+	    	const order = routeComplexity.PARAMS + (i/-maxDirectoryDepth)
+	    	if (order > route.order) route.order = order
+	    	if (route.type < routeComplexity.PARAMS) 
+	    		route.type = routeComplexity.PARAMS
 	    }
-	    if (route.order < ROUTE_COMPLEXITY.multiple && part.startsWith('[...')) {
-	    	route.order = ROUTE_COMPLEXITY.multiple + (i/-maxDirectoryDepth)
-	    	route.type = 'multiple'
+
+	    if (part.startsWith('[...')) {
+	    	const order = routeComplexity.SPREAD + (i/-maxDirectoryDepth)
+	    	if (order > route.order) route.order = order
+	    	if (route.type < routeComplexity.SPREAD)
+	    		route.type = routeComplexity.SPREAD
 	    }
 
 		// Remove square brackets at the start and end
-	    const normalizedPart = (isDynamicPart
+	    const normalizedSegment = (isParamSegment
 	        ? part.replace(/^\[(\.{3})?/, '').replace(/\]$/, '')
 	        : part
 	    ).toLowerCase()
 
-	    if (!isDynamicPart && normalizedPart === 'index') {
+	    if (!isParamSegment && normalizedSegment === 'index') {
 	    	const first = i === 0
-	    	const last = (i === pathParts.length - 1)
+	    	const last = (i === segments.length - 1)
 	    	// root index
 	    	if (first) route.routepath += '/'
 	    	// skip index parts at the end
 	    	if (last) continue
 	    }
 	    
-	    if (isDynamicPart) {
+	    if (isParamSegment) {
 	    	if (catchAllSectionMatch.test(part)) {
-	    		route.requiredParams[normalizedPart] = 'multiple'
-	    		route.routepath += `/*${normalizedPart}`
+	    		route.requiredParams[normalizedSegment] = 'multiple'
+	    		route.routepath += `/*${normalizedSegment}`
 	    	} else {
-	    		route.requiredParams[normalizedPart] = 'single'
-	    		route.routepath += `/:${normalizedPart}`
+	    		route.requiredParams[normalizedSegment] = 'single'
+	    		route.routepath += `/:${normalizedSegment}`
 	    	}
 	    } else {
-	        route.routepath += `/${normalizedPart}`
+	        route.routepath += `/${normalizedSegment}`
 	    }
 	}
 
@@ -224,7 +237,6 @@ function createRoute(name: string, absPath: string, pathParts: string[]) {
 	return route
 }
 
-const isDynamicSegment = (s: string) => /\[.+\]/.test(s)
 
 function findErrorRoute(errorRoutes: ErrorRoute[], parts: string[]): ErrorRoute | undefined {
 	const dirParts = parts.slice(0, -1)
@@ -235,14 +247,14 @@ function findErrorRoute(errorRoutes: ErrorRoute[], parts: string[]): ErrorRoute 
 	if (dirParts.length) findErrorRoute(errorRoutes, dirParts)
 }
 
-export function isStatic(route: Route) {
-	return route.type === 'static'
+export function isBasic(route: Route) {
+	return !isDynamic(route)
 }
 
 export function isDynamic(route: Route) {
 	return (
-		(route.type === 'single') 
-		|| (route.type === 'multiple')
+		(route.type === routeComplexity.PARAMS) 
+		|| (route.type === routeComplexity.SPREAD)
 	)
 }
 
