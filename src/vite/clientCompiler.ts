@@ -18,6 +18,8 @@ export async function clientCompiler(name: string, ssrResolvedConfig: ResolvedCo
 
 	const { root, envDir } = ssrResolvedConfig
 
+	if (!envDir) throw new Error('no envDir found in ResolvedConfig')
+
 	const clientOutDir = join(ssrResolvedConfig.build.outDir, `../.${name}`)
 	const absClientOutDir = resolvePath(root, clientOutDir)
 

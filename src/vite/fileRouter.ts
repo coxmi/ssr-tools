@@ -6,13 +6,14 @@ import globToRegexp from 'glob-to-regexp'
 import serveStatic from 'serve-static'
 import { addToHead, addToBody } from './../file-router/html.ts'
 import { buildRoutes } from './../file-router/routes.ts'
-import { RouteBatchProcess } from './../file-router/processRoutes.ts'
+import { BuildStatic, devRequestHandler } from './../file-router/processRoutes.ts'
 import * as middleware from './../file-router/middleware.ts'
-import { requestHandler } from './../file-router/request.ts'
+import { webRequestFromNode, sendNodeResponse } from './../file-router/request.ts'
 import { devStyles, findConfigFile, toAbsolutePath } from './utility.ts'
 import { isObject } from './../utility/object.ts'
 import { sha } from './../utility/crypto.ts'
 import { ssrHotModuleReload } from './ssrHotModuleReload.ts'
+import { viteDevErrorPayload } from './viteDevErrorPayload.ts'
 
 import type { CSS } from './utility.ts'
 import type { PluginOption, ResolvedConfig } from 'vite'
@@ -60,7 +61,6 @@ export function fileRouter(opts: FileRouterUserOptions): PluginOption {
 	let matchFiles: RegExp
 
 	return [
-		ssrHotModuleReload(),
 		{
 			name: 'ssr-tools:file-router',
 			enforce: 'post',
@@ -132,15 +132,22 @@ export function fileRouter(opts: FileRouterUserOptions): PluginOption {
 
 				// TODO: [...all.ts] also matches on .well-known/ and other dotfiles
 				// what's the preferred solution to this?
+				// Astro just sends chrome devtools to next()
+				// https://github.com/withastro/astro/blob/main/packages/astro/src/vite-plugin-astro-server/plugin.ts#L142
 				const matched = devMatchRoute(settings, ctx.path)
-				if (!matched.route) return
+				if (!matched) return
 
-				const importedModules = ctx.server.moduleGraph.getModulesByFile(matched.route.module)
+				const isErrorRoute = html.startsWith('<!--dev-error-route-->')
+				const mod = isErrorRoute ? matched.route.error?.module : matched.route.module
+				if (!mod) return
+
+				const importedModules = ctx.server.moduleGraph.getModulesByFile(mod)
 				if (!importedModules) return
 
-				// save stylesheets indexed per route for use in load hook
-				const id = sha(ctx.path)
+				// save stylesheets indexed per module for use in load hook
+				const id = sha(mod)
 				const css = await devStyles(importedModules, ctx.server)
+				stylesheets.clear()
 				stylesheets.set(id, css)
 
 				return [
@@ -172,6 +179,12 @@ export function fileRouter(opts: FileRouterUserOptions): PluginOption {
 					const sha = new URLSearchParams(id.split('?').pop()).get('v') || ''
 					return stylesheets.get(sha) || []
 				}
+				// statically included styles on initial page load
+				if (id.startsWith('/@file-router-styles.css?')) {
+					return getStylesheets(id).map(sheet => sheet.css).join('\n')
+				}
+				// import file router styles to allow vite's hot module reload
+				// then remove the <link> for the intial style rules
 				if (id.startsWith('/@file-router-styles-dev?')) {
 					return getStylesheets(id)
 						.map(sheet => `import "${sheet.file}"`)
@@ -183,46 +196,80 @@ export function fileRouter(opts: FileRouterUserOptions): PluginOption {
 						}
 						`.replaceAll(/^\t{5}/gm, '')
 				}
-				if (id.startsWith('/@file-router-styles.css?')) {
-					return getStylesheets(id).map(sheet => sheet.css).join('\n')
-				}
 			},
 
 			configureServer(server) {
-
 		    	server.watcher.add([
 		    		settings.routerDirAbsolute, 
 		    		settings.routerGlobAbsolute
 		    	])
-
 		    	if (userOptions.removeTrailingSlash) {
 		    		server.middlewares.use(middleware.removeTrailingSlash)
 		    	}
 
 				return () => {
+					// clear cache for styles
+					server.middlewares.use(async (req, res, next) => {
+						if (req.originalUrl && req.originalUrl.startsWith('/@file-router-styles')) {
+							res.setHeader('Cache-Control', 'no-cache')
+						}
+						next()
+					})
+
 					server.middlewares.use(async (req, res, next) => {
 						const url = req.originalUrl
-						if (typeof url !== 'string') return next()
+						if (!url) return next()
 						const matchedRoute = devMatchRoute(settings, url)
-						await requestHandler({
-							url,
-							matchedRoute,
-							importer: server.ssrLoadModule,
-							htmlTransform: html => server.transformIndexHtml(url, html),
-							ctx: { req, res, next }
-						})
+						if (!matchedRoute) return next()
+						const { route, params } = matchedRoute
+						const request = webRequestFromNode(req, res)
+						try {
+							const response = await devRequestHandler({
+								request,
+								route,
+								params, 
+								importer: server.ssrLoadModule,
+								fixStacktrace: server.ssrFixStacktrace,
+								htmlTransform: (html, { isErrorRequest }) => {
+									if(!isErrorRequest) return server.transformIndexHtml(url, html)
+									const errorUrl = route.error?.routepath || ''
+									return server.transformIndexHtml(
+										errorUrl, `<!--dev-error-route:${errorUrl}-->${html}`
+									)
+								}
+							})
+							return sendNodeResponse(response, res)
+						} catch(err) {
+							// send blank error page to client, so hot reload errors can be displayed
+							res.end(
+								await server.transformIndexHtml(
+									'/@file-router-default-error', 
+									'<!--dev-error-route:default--><html></html>'
+								)
+							)
+							if (!(err instanceof Error)) return
+							console.log(err)
+							// send error as soon as the response has closed & the websocket connection has connected
+							// (remove the connection event listener after it's sent, so it only applies to this request)
+							res.addListener('close', () => {
+								server.environments.client.hot.on('connection', function sendErrorPayload() {
+									server.environments.client.hot.send(viteDevErrorPayload(err))
+									server.environments.client.hot.off('connection', sendErrorPayload)
+								})
+							})
+						}
 					})
 				}
 			},
 
-			async writeBundle(options, bundle) {
+			async writeBundle(_options, bundle) {
 
 				// copy assets to server directory
 				fs.cpSync(
 					settings.assetsDirAbsolute, 
 					settings.ssrAssetsDirAbsolute,
 					{ recursive: true }
-				);
+				)
 
 				// remove the top-level assets directory later, after we've moved 
 				// or copied it to ssr and static
@@ -230,7 +277,7 @@ export function fileRouter(opts: FileRouterUserOptions): PluginOption {
 				const remove = () => fs.rmSync(toRemove, { recursive: true, force: true })
 				
 				// gather chunks and assets from bundle
-				const chunks: OutputChunk[] = []
+				const chunks: Record<string, OutputChunk> = {}
 				const assets: Record<string, OutputAsset> = {}
 				for (const file of Object.values(bundle)) {
 					if (file.type === 'asset' && file.names[0]) {
@@ -240,21 +287,15 @@ export function fileRouter(opts: FileRouterUserOptions): PluginOption {
 						&& file.isEntry 
 						&& file.facadeModuleId 
 						&& matchFiles.test(file.facadeModuleId)) {
-						chunks.push(file)
+						chunks[file.facadeModuleId] = file
 					}
 				}
 
-				if (!chunks.length) return remove()
+				if (!Object.keys(chunks).length) return remove()
 
 				// copy assets to static directory and delete original assets
 				fs.cpSync(settings.assetsDirAbsolute, settings.staticAssetsDirAbsolute, {recursive: true });
 				remove()
-
-				// build routes for compilation
-				const routes = buildRoutes({
-					dir: settings.routerDirAbsolute,
-					files: glob.sync(settings.routerGlobAbsolute)
-				})
 
 				// gather scripts and styles to result from bundle manifest
 				const stylesheets: string[] = []
@@ -268,31 +309,41 @@ export function fileRouter(opts: FileRouterUserOptions): PluginOption {
 					scripts.push(`<script src="${src}"></script>`)
 				}
 
-				const proc = new RouteBatchProcess()
-
-				await Promise.all(chunks.map(async chunk => {
-					if (!chunk.facadeModuleId) return
-					const route = routes.findRouteByFile(chunk.facadeModuleId)
-					const compiledPath = path.join(settings.buildDirAbsolute, chunk.fileName)
-					if (!route) return
-					const exported = await import(compiledPath)
-					proc.add(route, exported)
-				}))
-
-				await proc.buildStatic({ 
-					htmlTransform: html => {
-						if (stylesheets.length)  html = addToHead(html, stylesheets)
-						if (scripts.length) html = addToBody(html, scripts)
-						return html
+				// build routes for compilation
+				const routes = buildRoutes({
+					dir: settings.routerDirAbsolute,
+					files: glob.sync(settings.routerGlobAbsolute),
+					setImport: absPath => {
+						const chunk = chunks[absPath]
+						if (!chunk) return
+						return path.join(settings.buildDirAbsolute, chunk.fileName)
 					}
 				})
+				
+				try {
+					const buildStatic = new BuildStatic(...routes.routes)
+					await buildStatic.build({ 
+						importer: async path => await import(path),
+						htmlTransform: async html => {
+							if (stylesheets.length)  html = addToHead(html, stylesheets)
+							if (scripts.length) html = addToBody(html, scripts)
+							return html
+						}
+					})
 
-				await proc.write(
-					settings.staticBuildDirAbsolute,
-					settings.buildDirAbsolute
-				)
+					await buildStatic.write(
+						settings.staticBuildDirAbsolute,
+						settings.buildDirAbsolute
+					)
+				} catch(e) {
+					console.log(e)
+					const endBuild = new Error()
+					endBuild.stack = ''
+					throw endBuild
+				}
 			}
-		}
+		},
+		ssrHotModuleReload()
 	]
 }
 
@@ -319,11 +370,11 @@ export async function fileRouterMiddleware(configPathOrFolder: string = '') {
 	const routes = buildRoutes({
 		dir: settings.routerDirAbsolute,
 		files: glob.sync(settings.routerGlobAbsolute),
-		remapFiles: importPath => {
+		setImport: absPath => {
 			// use manifest to have buildRoutes match against the built files rather than source
-			const importPathRelative = importPath.replace(settings.root + '/', '')
+			const importPathRelative = absPath.replace(settings.root + '/', '')
 			const routeInfo = manifest[importPathRelative]
-			if (!routeInfo) return false
+			if (!routeInfo) return
 			return path.join(settings.buildDirAbsolute, routeInfo.file)
 		}
 	})
@@ -331,8 +382,13 @@ export async function fileRouterMiddleware(configPathOrFolder: string = '') {
 	const main = async (req: any, res: any, next: any) => {
 
 		const url = req.originalUrl
-		if (typeof url !== 'string') return next()
+		if (!url) return next()
 		const matchedRoute = routes.matchRoute(url)
+		if (!matchedRoute) {
+			// TODO: needs default _error handling for 404s
+			// for now let's just respond with a basic err
+			return sendNodeResponse(new Response(null, { status: 404 }), res)
+		}
 
 		/**
 		 * TODO:
@@ -355,16 +411,23 @@ export async function fileRouterMiddleware(configPathOrFolder: string = '') {
 			scripts.push(`<script src="/${src}"></script>`)
 		}
 
-		await requestHandler({
-			url,
-			matchedRoute,
-			htmlTransform: html => {
-				if (stylesheets.length) html = addToHead(html, stylesheets)
-				if (scripts.length) html = addToBody(html, scripts)
-				return html
-			},
-			ctx: { req, res, next }
-		})		
+		const { route, params } = matchedRoute
+		const request = webRequestFromNode(req, res)
+		
+		try {
+			// TODO: create a faster requestHandler for prod
+			const response = await devRequestHandler({ 
+				request, route, params,
+				htmlTransform: async html => {
+					if (stylesheets.length) html = addToHead(html, stylesheets)
+					if (scripts.length) html = addToBody(html, scripts)
+					return html
+				}
+			})
+			return sendNodeResponse(response, res)
+		} catch(err) {
+			return sendNodeResponse(new Response(null, { status: 500 }), res)
+		}
 	}
 
 	const router = createRouter()

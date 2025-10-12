@@ -67,6 +67,7 @@
   },
   "dependencies": {
     "@barelyhuman/astring-jsx": "^2.0.1",
+    "@remix-run/node-fetch-server": "^0.10.0",
     "acorn": "^8.11.2",
     "acorn-jsx": "^5.3.2",
     "acorn-jsx-walk": "^2.0.0",
@@ -78,8 +79,7 @@
     "path-to-regexp": "^8.3.0",
     "recast": "^0.23.4",
     "router": "^2.2.0",
-    "serve-static": "^1.15.0",
-    "source-map-support": "^0.5.21"
+    "serve-static": "^1.15.0"
   },
   "devDependencies": {
     "@types/fs-extra": "^11.0.4",

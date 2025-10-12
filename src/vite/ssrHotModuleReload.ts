@@ -1,9 +1,7 @@
 import type { Plugin, EnvironmentModuleNode } from 'vite'
 
-// adapted from:
-// https://github.com/blinkk/rootjs/pull/736
-// to fix:
-// https://github.com/vitejs/vite/issues/19114
+// from: https://github.com/withastro/astro/blob/63ca266b9039ed241ee5257d1b2e6b2337a041c9/packages/astro/src/vite-plugin-hmr-reload/index.ts
+// to fix: https://github.com/vitejs/vite/issues/19114
 
 export function ssrHotModuleReload(): Plugin {
 	return {

@@ -25,26 +25,25 @@ export type Route = {
 	type: Values<typeof routeComplexity>
 	order: number,
 	match: MatchFn
-	matchParams: MatchParamsFn
+	requestDataFromParams: RouteRequestDataFn
 	regexp?: RegExp
 	error: ErrorRoute | undefined
 }
 
-type ParamData = Record<string, string | string[] | undefined>
+export type ErrorRoute = Omit<Route, 'error'> & {
+	dir: string
+}
 
-type MatchedOutput = {
+export type ParamData = Record<string, string | string[]>
+
+export type RouteRequestData = {
 	path: string
 	params: ParamData
 }
 
-type MatchFn = (url: string) => false | MatchedOutput
-type MatchParamsFn = (params: ParamData) => false | never | MatchedOutput
-
-export type ErrorRoute = {
-	module: string	
-	segments: string[]
-	dir: string
-}
+type MatchFn = (url: string) => false | RouteRequestData
+type RouteRequestDataFn = (params: ParamData) => false | never | RouteRequestData
+type SetImportFn = (absPath: string) => string | undefined
 
 export type MatchedRoute = {
 	route: Route
@@ -54,7 +53,7 @@ export type MatchedRoute = {
 export type BuildRoutesArgs = {
     files: string[]
     dir: string
-    remapFiles?: (path: string) => string | false
+    setImport?: SetImportFn
 }
 
 
@@ -75,7 +74,7 @@ const queryMatch = /\?.*$/
  * build a list of routes to match against URLs.
  * To test the built routes against live URLs use `routes.matchRoute(path, routes)`
  */
-export function buildRoutes({ files, dir, remapFiles }: BuildRoutesArgs) {
+export function buildRoutes({ files, dir, setImport }: BuildRoutesArgs) {
     
     if (!dir.startsWith('/'))
     	throw new Error(`'dir' must be an absolute path`)
@@ -90,12 +89,8 @@ export function buildRoutes({ files, dir, remapFiles }: BuildRoutesArgs) {
     const dirMatch: RegExp = new RegExp(dirMatchExact.toString().slice(1, -2))
 
     for (const file of files) {
-    	const absPath = remapFiles ? remapFiles(file) : file 
+    	const absPath = setImport ? setImport(file) : file
     	if (!absPath) continue
-
-    	if (remapFiles && !absPath.startsWith('/')) {
-			throw new Error(`'remapFiles' must return an absolute path. Returned "${absPath}" for "${file}"`)
-		}
 
     	// absolute path localised to router dir (e.g. /[slug]/index.ts)
     	// and without extension (e.g. /[slug]/index)
@@ -105,11 +100,7 @@ export function buildRoutes({ files, dir, remapFiles }: BuildRoutesArgs) {
 
         const isErrorRoute = (segments[segments.length - 1] === '_error')
         if (isErrorRoute) {
-        	errorRoutes.push({
-        		module: absPath,
-        		segments: segments,
-        		dir: join(...segments.slice(0, -1))
-        	})
+        	errorRoutes.push(createErrorRoute(filepathExt, absPath, segments))
         }
 
         // ignore files and folders starting with an underscore
@@ -161,6 +152,15 @@ export function buildRoutes({ files, dir, remapFiles }: BuildRoutesArgs) {
     }
 }
 
+function createErrorRoute(name: string, absPath: string, segments: string[]): ErrorRoute {
+	const r = createRoute(name, absPath, segments)
+	delete r.error
+	return {
+		...r,
+		dir: join(...r.segments.slice(0, -1))
+	}
+}
+
 function createRoute(name: string, absPath: string, segments: string[]) {
 	
 	const route: Route = {
@@ -171,9 +171,9 @@ function createRoute(name: string, absPath: string, segments: string[]) {
 	    requiredParams: {},
 	    type: routeComplexity.BASIC,
 	    order: routeComplexity.BASIC,
+	    error: undefined,
 	    match: () => false,
-	    matchParams: () => false,
-	    error: undefined
+	    requestDataFromParams: () => false,
 	}
 
 	for (let i = 0; i < segments.length; i++) {
@@ -231,7 +231,7 @@ function createRoute(name: string, absPath: string, segments: string[]) {
 		decode: decodeURIComponent 
 	})
 
-	route.matchParams = (params: ParamData) => validateParams(params, route)
+	route.requestDataFromParams = (params: ParamData) => requestDataFromParams(params, route)
 
 	route.regexp = pathToRegexp(route.routepath).regexp
 	return route
@@ -276,7 +276,7 @@ function arrayDisallowedChars(array: string[]): string[] {
 	return disallowed.filter(onlyUnique)
 }
 
-function validateParams(params: ParamData, route: Route): never | MatchedOutput {
+function requestDataFromParams(params: ParamData, route: Route): never | RouteRequestData {
 
 	const errors: Record<string, boolean> = {}
 	const outputParams: ParamData = {}

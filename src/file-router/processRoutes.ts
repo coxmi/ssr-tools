@@ -1,367 +1,161 @@
-import type { Route } from './routes.ts'
-import type { ParsedRouteResult } from './request.ts'
-import { isBasic, isDynamic } from './routes.ts'
-import { writeFile, mkdir } from 'node:fs/promises'
-import { getPageProps, parseRouteResponse } from './request.ts'
 import path from 'node:path'
 import { styleText } from 'node:util'
+import { writeFile, mkdir } from 'node:fs/promises'
+import { MultiError } from '../utility/MultiError.ts'
 
-type BuildStaticArgs = {
-	htmlTransform?: (html: string) => string
+import { 
+	isBasic, 
+	isDynamic, 
+	type Route, 
+	type RouteRequestData, 
+	type ParamData 
+} from './routes.ts'
+
+import { 
+	createFileRoute, 
+	getPageProps, 
+	env, 
+	type FileRoute, 
+	type UserHTMLTransform, 
+	type Importer 
+} from './fileRoute.ts'
+
+import { 
+	staticRequestFromPath, 
+	extension, 
+	isTextFormat 
+} from './request.ts'
+
+
+type BuildStaticOpts = {
+	htmlTransform?: (html: string) => Promise<string>,
+	importer?: (path: string) => Promise<unknown>
 }
 
-type Logger = (message: string) => void
-
-type ParamData = Record<string, string | string[] | undefined>
-
-
-type Env = typeof env[keyof typeof env]
-
-const env = {
-	STATIC: Symbol('static'),
-	DEV: Symbol('dev'),
-	BUILD: Symbol('build')
-} as const
-
-
-function isDevEnv(current: Env) {
-	return current === env.DEV
-}
-
-function isBuildEnv(current: Env) {
-	return current === env.BUILD
-}
-
-function isStaticEnv(current: Env) {
-	return current === env.STATIC
-}
-
-
-// TODO: refactor so errors within user modules
-// can be caught and rethrown, to be dealt with in bundler's dev mode
-// currently we eat any errors and only provide a summary message
-class RouteProcessErrors {
-	
-	private errors: Record<string, Boolean> = {}
-	private lastErrors: Record<string, Boolean> = {}
-	private numErrors = 0
-	
-	add(message: string) {
-		if (this.errors[message]) return this
-		this.errors[message] = true
-		this.numErrors++
-		return this
-	}
-
-	last(message: string) {
-		if (this.lastErrors[message]) return this
-		this.lastErrors[message] = true
-		this.numErrors++
-		return this
-	}
-
-	warn(message: string, logger: Logger = console.log) {
-		logger(message)
-		return this
-	}
-
-	merge(...errs: RouteProcessErrors[]) {
-		Object.assign(this.errors, ...(errs.map(err => err.errors)))
-		Object.assign(this.lastErrors, ...(errs.map(err => err.lastErrors)))
-		this.numErrors = Object.values(this.errors).length + Object.values(this.lastErrors).length
-		return this
-	}
-
-	throw(): undefined | never {
-		if (!this.numErrors) return
-		const err = new Error('\n' + [	
-			Object.keys(this.errors).join('\n'),
-			Object.keys(this.lastErrors).join('\n'),
-			`If you're facing a problem with ssr-tools not described above, please raise an issue at:\n` 
-				+ `https://github.com/coxmi/ssr-tools/issues`
-		].join('\n'))
-		err.stack = ''
-		throw err
-	}
-
-	get length() {
-		return this.numErrors
-	}
-}
-
-
-function validateExport(errors: RouteProcessErrors, route: Route, exported: unknown): RouteProcessErrors {
-	if (!exported || !isObject(exported))
-		return errors.add(`${route.name} – Export could not be parsed`)
-
-	if (!('default' in exported))
-		return errors.add(`${route.name} — No default export found, did you export the route function?`)
-
-	if ('default' in exported && typeof exported.default !== 'function')
-		errors.add(`${route.name} — Must export a function, exported '${typeof exported.default}'`)
-
-	return errors
-}
-
-
-function validateExportBuildArgs(errors: RouteProcessErrors, route: Route, exported: any, env: Env): RouteProcessErrors {
-
-	const { build } = exported
-
-	// static routes can be built without any exported build args
-	if (isBasic(route) && !build) return errors
-
-	// dynamic routes require build exports when building statically
-	if (isStaticEnv(env) && isDynamic(route) && !build) {
-		return errors.add(
-			`${route.name} – dynamic routes must export static build options, e.g:\n\n` 
-			+ `export const build = {\n  from: () => [...props],\n  url: () => '/path'\n}`
-		)
-	}
-
-	// build.from and build.url only need to exist for dynamic routes
-	if (isDynamic(route)) {
-		const requiredFns = ['from', 'url']
-		const missingFns = requiredFns.filter(ref => {
-			if (ref === 'from' && isIterable(build[ref])) return false
-			return typeof build[ref] !== 'function'
-		})
-		if (missingFns.length) {
-			const fns = missingFns.map(fn => `'build.${fn}'`).join(' and ')
-			const s = missingFns.length === 1 ? '' : 's'
-			const type = isDynamic(route) ? 'dynamic' : 'static'
-			errors.add(`${route.name} – ${fns} export required in ${type} routes`)
-		}		
-	}
-
-	// on static routes: if build.url has been defined warn that it won't be used
-	if (isBasic(route) && build && (build.from || build.url)) {
-		const fns = ['url']
-		const used = fns.filter(fn => typeof build[fn] === 'function').map(fn => `build.${fn}`).join(' and ')
-		const willNotBe = isDevEnv(env) ? 'will not be' : (used.length ? 'were not' : 'was not')
-		errors.warn(
-			`${route.name} – ${used} ${willNotBe} used when building static pages. `
-			+ `Use a dynamic file name to generate multiple pages.`
-		)
-	}
-
-	return errors
-}
-
-
-function parseUserUrlResult(route: Route, result: unknown): { path: string, params: ParamData } | never {
-
-	const asString = toString(result)
-
-	// if it's a string, check it against the route filename pattern
-	if (typeof result === 'string') {
-		const userUrl = result
-		const match = route.match(userUrl)
-		if (!match) {
-			throw new Error(
-				`${route.name} – Returned url "${asString}" does not match filename pattern "${route.routepath}"`
-			)
-		}
-		const path = match.path
-		const params = match?.params || {}
-		return { path, params }
-	}
-
-	// can also return a params object, check for basic object props
-	if (!isObject(result)) {
-		throw new Error(
-			`${route.name} – Value returned from build.url is not an object or a url string` + 
-			`${asString && `: ${asString}` || ''}`
-		)
-	}
-
-	const requiredParams = Object.keys(route.requiredParams)
-	if (!isRecordWithKeys(result, requiredParams)) {
-		throw new Error(
-			`${route.name} – Params missing from build.url: [${requiredParams.join(', ')}]`
-		)
-	}
-	
-	const matches = route.matchParams(result)
-	if (matches) return matches
-	
-	throw new Error(
-		`${route.name} – Could not parse result of build.url${asString && `: ${asString}` || ''}`
-	)		
-}
-
-/**
-	Processes exported route. Usage:
-
-	```ts
-	const proc = new RouteProcess(route: Route, exported: any)
-	proc.buildStatic(outputDir)
-	```
-
-	Exported route must be in the form:
-
-	```ts
-	export const build = {
-		from: async () => [
-			{ title: 'My page', slug: 'my-page' }, 
-			{ title: 'Another page', slug: 'another-page' }
-		],
-		url: props => `/${props.slug}`
-	}
-
-	// TODO: add handlers for GET/POST/HEAD/etc
-	export const handlers = {
-		GET: ctx => new Response(),
-		POST: ctx => new Response(),
-	}
-
-	export default function page({ req, res, props, params, url, route, ...ctx }) {
-		return `<html>
-			<body>
-				<h1>${props.title}</h1>
-				<pre>${JSON.stringify(params)}</pre>
-			</body>
-		</html>`
-	}
-	```
-*/
-
-class RouteProcess {
-
+class BuildStaticItem {
 	route: Route
-	exported: any
-	output: Array<[string, ParsedRouteResult]> = []
-	errors = new RouteProcessErrors()
+	output: Array<[string, Response]> = []
 
-	constructor(route: Route, exported: any) {
+	constructor(route: Route) {
 		this.route = route
-		this.exported = exported
 	}
 
-	async buildStatic(args: BuildStaticArgs = {}): Promise<RouteProcessErrors> {
-		
-		// do route validation up front, and merge errors
-		// we want all of the parse errors at the same time, 
-		// so we don't throw, that's done in the batch process
-		validateExport(this.errors, this.route, this.exported)
-		validateExportBuildArgs(this.errors, this.route, this.exported, env.STATIC)
-		if (this.errors.length) return this.errors
+	async buildStatic(options: BuildStaticOpts = {}): Promise<MultiError> {
+		const { 
+			htmlTransform = async html => html,
+			importer = async (path: string) => await import(path)
+		} = options
+
+		const pageErrors = new MultiError('', { 
+			prefix: this.route.name
+		})
+
+		let compiled: FileRoute
+		try {
+			compiled = await createFileRoute(this.route, importer, env.STATIC)	
+		} catch(e) {
+			if (e instanceof Error) return pageErrors.add(e)
+			return pageErrors
+		}
 
 		if (isBasic(this.route)) {
-			// routes without a dynamic url only render a single url with no params
-			// so we skip the props/routeParams steps
-			const url = this.route.routepath
-			const routeParams = {}
-			const renderProps = {}
+			const path = this.route.routepath
+			const req = staticRequestFromPath(path)
 			const props = getPageProps({ 
-				url, 
-				routeParams, 
-				props: renderProps 
+				req, 
+				routeParams: {}, 
+				props: {}
 			})
 			try {
-				const output = await this.exported.default(props)
-				const parsed = await parseRouteResponse(output, this.route.name)
-				this.output.push([ url, parsed ])
+				const res = await compiled.handler(props, htmlTransform)
+				this.output.push([path, res])
 			} catch(e) {
-				if (e instanceof Error) 
-					this.errors.add(`${this.route.name} – ${ e.message || 'Server error in route function'}`)
-				return this.errors
+				if (e instanceof Error) pageErrors.add(e)
 			}
-
 		} else if (isDynamic(this.route)) {
+			const from = [...await compiled.buildFrom()]
 
-			const { build } = this.exported
-			const getUrl = toFunc(build.url)
-			const getFrom = toFunc(build.from)
-
-			let userBuildFrom: Array<unknown>
-			let userBuildUrl: { path:string, params: ParamData }[]
-			try {
-				userBuildFrom = await getFrom()
-				if (!isIterable(userBuildFrom)) {
-					this.errors.add(`${this.route.name} — Value returned from build.from is not an interable`)
-					return this.errors
-				}
-				userBuildFrom = Array.from(userBuildFrom)
-				userBuildUrl = await Promise.all(
-					userBuildFrom.map(async (entry: any) => {
-						const urlObj: unknown = await getUrl(entry)
-						return parseUserUrlResult(this.route, urlObj)
-					})
-				)
-			} catch(e) {
-				if (e instanceof Error) 
-					this.errors.add(`${this.route.name} – ${e.message || 'Server error in user build.from or build.url functions'}`)
-				return this.errors
-			}
-
-			await Promise.all(userBuildUrl.map(async (urlProps, index) => {
-				const { path, params } = urlProps
-				const props = getPageProps({ 
-					url: path, 
-					routeParams: params,
-					props: (userBuildFrom[index] || {})
-				})
+			await Promise.all(from.map(async item => {
+				let urlProps: RouteRequestData
 				try {
-					const url = path
-					const output = await this.exported.default(props)
-					const parsed = await parseRouteResponse(output, this.route.name)
-					this.output.push([ url, parsed ])
+					urlProps = await compiled.buildUrl(item)
 				} catch(e) {
-					if (e instanceof Error) 
-						this.errors.add(`${this.route.name} – ${e.message || 'Server error in route function'}`)
+					if (e instanceof Error) pageErrors.add(e)
+					return
+				}
+				const { path, params } = urlProps
+				const req = staticRequestFromPath(path)
+				const props = getPageProps({ 
+					req, 
+					routeParams: params,
+					props: item
+				})
+
+				try {
+					const res = await compiled.handler(props, htmlTransform)
+					this.output.push([path, res])
+				} catch(e) {
+					if (e instanceof Error) pageErrors.add(e)
+					return
 				}
 			}))
 		}
-
-		if (typeof args.htmlTransform === 'function') {
-			for (const output of this.output) {
-				const [_, parsed] = output
-				if (parsed.headers['Content-Type'] === 'text/html') {
-					if (parsed.body) parsed.body = args.htmlTransform(parsed.body)
-				}
-			}
-		}
-
-		return this.errors
+		return pageErrors
 	}
 }
 
 
-export class RouteBatchProcess {
-	routes: RouteProcess[] = []
-	errors: RouteProcessErrors = new RouteProcessErrors()
+/**
+	Builds routes into static files. Usage:
+	```ts
+	const builder = new BuildStatic(route: Route)
+	builder.build({ htmlTransform, importer })
+	builder.write(outputDir, buildDir)
+	```
+*/
+
+export class BuildStatic {
+	builders: BuildStaticItem[] = []
+	errors: MultiError = new MultiError('(static) error while building pages')
 	processed: Record<string, string> = {}
-	logger: Logger
-
-	constructor(logger: Logger = console.log) {
-		this.logger = logger
-	}
 	
-	add(route: Route, exported: any) {
-		const proc = new RouteProcess(route, exported)
-		this.routes.push(proc)
+	constructor(...routes: Route[]) {
+		this.add(...routes)
 	}
 
-	async buildStatic(args: BuildStaticArgs = {}) {
-		const errors = await Promise.all(this.routes.map(proc => proc.buildStatic(args)))
-		this.errors.merge(...errors)
+	add(...routes: Route[]) {
+		const builders = routes.map(route => new BuildStaticItem(route))
+		this.builders.push(...builders)
+	}
 
-		this.routes.map(proc => {
-			for (const out of proc.output) {
-				const [url, parsed] = out
-				if (typeof parsed.body === 'undefined') continue
-				const filename = outputFileName(url, parsed.ext)
+	async build(options: BuildStaticOpts = {}) {
+		// build all routes
+		const buildErrs = await Promise.all(this.builders.map(builder => builder.buildStatic(options)))
+		this.errors.merge(...buildErrs)
+
+		// dry run to check for duplicates
+		await Promise.all(this.builders.map(async builder => {
+			await Promise.all(builder.output.map(async (output) => {
+				const [url, response] = output
+				if (!isTextFormat(response)) {
+					// TODO: support other Content-Types
+					this.errors.add(new Error(`Only "Content-Type: text/*" responses are allowed`))
+					return
+				}
+				const body = await response.text()
+				if (typeof body === 'undefined') return
+				const ext = extension(response)
+				const filename = outputFileName(url, ext)
 				const exists = this.processed[filename]	
 				if (exists) {
-					this.errors.add(`"${filename}" already exists, skipping duplicate`)
-					continue
+					this.errors.add(new Error(`"${filename}" already exists, skipping duplicate`))
+					return
 				}
-				this.processed[filename] = parsed.body
-			}
-		})
+				this.processed[filename] = body
+			}))
+		}))
 
-		if (this.errors.length) this.errors.throw()
+		if (this.errors.length) throw this.errors
 	}
 
 	async write(outputDir: string, buildDir: string) {
@@ -374,7 +168,8 @@ export class RouteBatchProcess {
 			})
 		)
 
-		this.logger(`${styleText('green', '✓')} Created ${number} static file${number === 1 ? '' : 's'}.`)	
+		// TODO: use bundler logger if provided
+		console.log(`${styleText('green', '✓')} Created ${number} static file${number === 1 ? '' : 's'}.`)	
 		
 		const buildDirName = styleText('dim', path.basename(buildDir) + '/')
 		const outputDirName = path.relative(buildDir, outputDir)
@@ -392,10 +187,9 @@ export class RouteBatchProcess {
 		}
 		
 		const message = limit.join('\n')
-		this.logger(message)
+		console.log(message)
 	}
 }
-
 
 function outputFileName(path: string, type:string = '') {
 	let base = path
@@ -411,41 +205,75 @@ async function emitFile(outputPath: string, contents: string) {
 }
 
 
-function isRecordWithKeys(value: object, keys: string[]): value is Record<PropertyKey, string | string[]> {
-	if (typeof value !== "object" || value === null) return false
-	const record = value as Record<PropertyKey, unknown>
-	return keys.every(key =>
-		key in record && (
-			typeof record[key] === "string" || (
-				Array.isArray(record[key]) 
-				&& record[key].every(v => typeof v === "string")
-        )
-       )
-	)
+type DevRequestHandlerArgs = {
+	route: Route
+	request: Request
+	params: ParamData
+	importer?: Importer
+	htmlTransform?: UserHTMLTransform,
+	fixStacktrace?: (e: Error) => void
 }
 
+export async function devRequestHandler(args: DevRequestHandlerArgs): Promise<Response> {
 
-function isIterable(x: unknown) {
-	return Symbol.iterator in Object(x)
-}
+	const { 
+		route, 
+		request, 
+		params, 
+		importer = (path: string) => import(path), 
+		htmlTransform = async html => html,
+		fixStacktrace = () => {} 
+	} = args
 
-
-function isObject(obj: unknown): obj is object {
-  return obj === Object(obj)
-}
-
-
-function toString(obj: unknown) {
-	let string = typeof obj?.toString === 'function' ? obj.toString() : ''
-	if (string.startsWith('[object')) {
-		try { string = JSON.stringify(obj, null, 2) } catch(e) {}
+	let compiled: FileRoute
+	const errors = new MultiError('(dev) error on route request handler', { 
+		prefix: route.name, 
+		fixStacktrace
+	})
+	
+	try {
+		compiled = await createFileRoute(route, importer, env.DEV)
+	} catch(e) {
+		if (e instanceof Error) {
+			errors.add(e)
+			throw errors
+		}
 	}
-	return string
-}
 
+	async function handler() {
+		const props = getPageProps({ 
+			req: request, 
+			routeParams: params,
+			props: {}
+		})
+		return await compiled.handler(props, htmlTransform)
+	}
 
-// TODO: change any type to unknown, and fix parse type errors in RouteProcess.buildStatic
-function toFunc(obj: any): (...args: any[]) => any  {
-	if (typeof obj === 'function') return obj
-	return () => obj
+	async function errorHandler(error: Error) {
+		const props = {
+			error,
+			...getPageProps({ 
+				req: request, 
+				routeParams: params,
+				props: {}
+			})
+		}
+		return await compiled.errorHandler(props, htmlTransform)
+	}
+
+	try {
+		return await handler()
+	} catch(mainErr) {
+		if (mainErr instanceof Error) {
+			errors.add(mainErr)
+			try {
+				return await errorHandler(mainErr)	
+			} catch(errorErr) {
+				if (errorErr instanceof Error) {
+					throw errors.add(errorErr)
+				}
+			}
+		}
+	}
+	throw errors
 }

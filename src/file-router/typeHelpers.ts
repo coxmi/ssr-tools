@@ -1,10 +1,3 @@
-// type Unpack<T> = {
-//   [K in keyof T]: T[K] extends object ? Unpack<T[K]> : T[K]
-// }
-
-// type UnpackAlt<T> = {
-//   [K in keyof T]: UnpackAlt<T[K]>
-// }
 
 type Params = {
 	params: Record<string, string | string[]>

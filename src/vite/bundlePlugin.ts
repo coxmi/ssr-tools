@@ -316,6 +316,18 @@ export function bundlePlugin(): Plugin[] {
 			configureServer(_server) {
 				if (!initiated) return
 		    	server = _server
+		    	server.middlewares.use(async (req, res, next) => {
+		    		if (!req.originalUrl) return
+		    		let isBundleReq = false
+		    		for (const name in bundles) {
+		    			const bundle = bundles[name]
+		    			if (req.originalUrl.startsWith(bundle.devName)) continue
+		    			isBundleReq = true
+		    		}
+		    		// no browser cache for bundles in dev
+		    		if (isBundleReq) res.setHeader('Cache-Control', 'no-cache')
+		    		next()
+		    	})
 		    },
 
 			transformIndexHtml(html, ctx) {
