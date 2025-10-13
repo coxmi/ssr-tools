@@ -9,9 +9,8 @@ type MultiErrorOptions = {
 
 const newlineRE = /\r?\n/
 
-// doesn't extend AggregateError because we need to use a getter for 'errors'
-// AggErrors show up in the console as a strangely-formatted array/string, but .error is
-// a getter, we get to form our own stack
+// doesn't extend AggregateError because it shows in the console 
+// as a strangely-formatted array/string crossover
 
 export class MultiError extends Error {
 	
@@ -35,10 +34,10 @@ export class MultiError extends Error {
 		this.stack = '\n\n' + this.stackStart()
 	}
 
-	stackStart() {
+	stackStart(prefix = this.#prefix) {
 		return styleText(
 			'red', 
-			MultiError.firstLine(this.name, this.#prefix, this.message)
+			MultiError.firstLine(this.name, prefix, this.message)
 		)
 	}
 
@@ -70,12 +69,14 @@ export class MultiError extends Error {
 		// @ts-expect-error
 		err.loc = locFromStack(err.stack)
 		// @ts-expect-error
+		const isLib = err.loc.file.includes('/node_modules/') || err.loc.file.includes('/ssr-tools/')
+		// @ts-expect-error
 		err.frame = generateCodeFrameFromError(err.loc)
 		// reconstruct the stack of the individual errors
 		err.stack = [
 			firstLine,
 			// @ts-expect-error
-			err.frame,
+			isLib ? '' : err.frame,
 			styleText('dim', stackLines.join('\n'))
 		].filter(Boolean).join('\n\n')
 
@@ -85,7 +86,17 @@ export class MultiError extends Error {
 	}
 
 	merge(...errs: MultiError[]) {	
-		const errorsToMerge = errs.map(err => err.#errRecord)
+
+		const errorsToMerge = errs.map(err => {
+			Object.values(err.#errRecord).map(e => {
+				// merge prefixes
+				if (e.stack) e.stack = e.stack?.replace(
+					err.#prefix, 
+					[this.#prefix, err.#prefix].filter(Boolean).join(' ')
+				)
+			})
+			return err.#errRecord
+		})
 		Object.assign(this.#errRecord, ...errorsToMerge)
 		this.#_errors = Object.values(this.#errRecord)
 
