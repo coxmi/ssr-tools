@@ -141,7 +141,7 @@ export class BuildStatic {
 		this.builders.push(...builders)
 	}
 
-	async build(options: BuildStaticOpts = {}) {
+	async build(options: BuildStaticItemOpts = {}) {
 		// build all routes
 		const buildErrs = await Promise.all(this.builders.map(builder => builder.buildStatic(options)))
 		this.errors.merge(...buildErrs)
@@ -227,7 +227,7 @@ type DevRequestHandlerArgs = {
 	fixStacktrace?: (e: Error) => void
 }
 
-export async function devRequestHandler(args: DevRequestHandlerArgs): Promise<Response> {
+export async function devRequestHandler(args: DevRequestHandlerArgs): Promise<[Response, MultiError]> {
 
 	const { 
 		route, 
@@ -238,6 +238,7 @@ export async function devRequestHandler(args: DevRequestHandlerArgs): Promise<Re
 		fixStacktrace = () => {} 
 	} = args
 
+	let response: Response
 	let compiled: FileRoute
 	const errors = new MultiError('(dev) error on route request handler', { 
 		prefix: route.name, 
@@ -249,7 +250,8 @@ export async function devRequestHandler(args: DevRequestHandlerArgs): Promise<Re
 	} catch(e) {
 		if (e instanceof Error) {
 			errors.add(e)
-			throw errors
+			response = new Response(null, { status: 500 })
+			return [response, errors]
 		}
 	}
 
@@ -275,18 +277,24 @@ export async function devRequestHandler(args: DevRequestHandlerArgs): Promise<Re
 	}
 
 	try {
-		return await handler()
+		response = await handler()
 	} catch(mainErr) {
+		response = new Response(null, { status: 500 })
 		if (mainErr instanceof Error) {
 			errors.add(mainErr)
 			try {
-				return await errorHandler(mainErr)	
+				response = await errorHandler(mainErr)	
 			} catch(errorErr) {
+				response = new Response(null, { status: 500 })
 				if (errorErr instanceof Error) {
-					throw errors.add(errorErr)
+					errors.add(errorErr)
 				}
 			}
 		}
 	}
-	throw errors
+
+	// returns a [response, errors] tuple so that we can separately
+	// log to the console and display the correct error message in HMR
+	// the caller is expected to deal with this as it sees fit
+	return [response, errors]	
 }

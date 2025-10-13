@@ -223,41 +223,42 @@ export function fileRouter(opts: FileRouterUserOptions): PluginOption {
 						if (!matchedRoute) return next()
 						const { route, params } = matchedRoute
 						const request = webRequestFromNode(req, res)
-						try {
-							const response = await devRequestHandler({
-								request,
-								route,
-								params, 
-								importer: server.ssrLoadModule,
-								fixStacktrace: server.ssrFixStacktrace,
-								htmlTransform: (html, { isErrorRequest }) => {
-									if(!isErrorRequest) return server.transformIndexHtml(url, html)
-									const errorUrl = route.error?.routepath || ''
-									return server.transformIndexHtml(
-										errorUrl, `<!--dev-error-route:${errorUrl}-->${html}`
-									)
-								}
-							})
-							return sendNodeResponse(response, res)
-						} catch(err) {
-							// send blank error page to client, so hot reload errors can be displayed
-							res.end(
-								await server.transformIndexHtml(
-									'/@file-router-default-error', 
-									'<!--dev-error-route:default--><html></html>'
+						const [response, errors] = await devRequestHandler({
+							request,
+							route,
+							params, 
+							importer: server.ssrLoadModule,
+							fixStacktrace: server.ssrFixStacktrace,
+							htmlTransform: (html, { isErrorRequest }) => {
+								if(!isErrorRequest) return server.transformIndexHtml(url, html)
+								const errorUrl = route.error?.routepath || ''
+								return server.transformIndexHtml(
+									errorUrl, `<!--dev-error-route:${errorUrl}-->${html}`
 								)
-							)
-							if (!(err instanceof Error)) return
-							console.log(err)
-							// send error as soon as the response has closed & the websocket connection has connected
-							// (remove the connection event listener after it's sent, so it only applies to this request)
-							res.addListener('close', () => {
-								server.environments.client.hot.on('connection', function sendErrorPayload() {
-									server.environments.client.hot.send(viteDevErrorPayload(err))
-									server.environments.client.hot.off('connection', sendErrorPayload)
-								})
-							})
+							}
+						})
+
+						if (!errors.length) {
+							return sendNodeResponse(response, res)
 						}
+
+						// send blank error page to client, so hot reload errors can be displayed
+						res.end(
+							await server.transformIndexHtml(
+								'/@file-router-default-error', 
+								'<!--dev-error-route:default--><html></html>'
+							)
+						)
+						if (!(errors instanceof Error)) return
+						console.log(errors)
+						// send error as soon as the response has closed & the websocket connection has connected
+						// (remove the connection event listener after it's sent, so it only applies to this request)
+						res.addListener('close', () => {
+							server.environments.client.hot.on('connection', function sendErrorPayload() {
+								server.environments.client.hot.send(viteDevErrorPayload(errors))
+								server.environments.client.hot.off('connection', sendErrorPayload)
+							})
+						})
 					})
 				}
 			},
@@ -414,21 +415,21 @@ export async function fileRouterMiddleware(configPathOrFolder: string = '') {
 
 		const { route, params } = matchedRoute
 		const request = webRequestFromNode(req, res)
-		
-		try {
-			// TODO: create a faster requestHandler for prod
-			const response = await devRequestHandler({ 
-				request, route, params,
-				htmlTransform: async html => {
-					if (stylesheets.length) html = addToHead(html, stylesheets)
-					if (scripts.length) html = addToBody(html, scripts)
-					return html
-				}
-			})
-			return sendNodeResponse(response, res)
-		} catch(err) {
-			return sendNodeResponse(new Response(null, { status: 500 }), res)
-		}
+		// TODO: create a faster requestHandler for prod
+		const [response, errors] = await devRequestHandler({ 
+			request, route, params,
+			htmlTransform: async html => {
+				if (stylesheets.length) html = addToHead(html, stylesheets)
+				if (scripts.length) html = addToBody(html, scripts)
+				return html
+			}
+		})
+		if (!errors.length) {
+			return sendNodeResponse(response, res)	
+		} else {
+			console.log(errors)
+			return sendNodeResponse(new Response(null, { status: 500 }), res)	
+		}	
 	}
 
 	const router = createRouter()
