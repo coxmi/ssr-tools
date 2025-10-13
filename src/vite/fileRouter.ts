@@ -321,7 +321,8 @@ export function fileRouter(opts: FileRouterUserOptions): PluginOption {
 				})
 				
 				try {
-					const buildStatic = new BuildStatic(...routes.routes)
+					const buildStatic = new BuildStatic()
+					buildStatic.add(...routes.routes)
 					await buildStatic.build({ 
 						importer: async path => await import(path),
 						htmlTransform: async html => {

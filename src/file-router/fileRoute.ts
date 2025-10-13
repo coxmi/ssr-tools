@@ -240,12 +240,12 @@ function parseModuleBuild(route: Route, exported: ParseModuleResult, env: Env): 
 
 function parseResultBuildFrom(route: Route, result: unknown): Iterable<unknown> | never {
 	if (isIterable(result)) return result
-	throw new Error(`Value returned from build.from is not an interable`)
+	throw new Error(`Value returned from build.from is not an interable: ${typeof result})`)
 }
 
 function parseResultBuildUrl(route: Route, result: unknown): RouteRequestData | never {
 
-	const asString = toString(result)
+	const debugString = toDebugString(result)
 
 	// if it's a string, check it against the route filename pattern
 	if (typeof result === 'string') {
@@ -253,7 +253,7 @@ function parseResultBuildUrl(route: Route, result: unknown): RouteRequestData | 
 		const match = route.match(userUrl)
 		if (!match) {
 			throw new Error(
-				`Returned url "${asString}" does not match filename pattern "${route.routepath}"`
+				`Returned url "${debugString}" does not match filename pattern "${route.routepath}"`
 			)
 		}
 		const path = match.path
@@ -265,7 +265,7 @@ function parseResultBuildUrl(route: Route, result: unknown): RouteRequestData | 
 	if (!isObject(result)) {
 		throw new Error(
 			`Value returned from build.url is not a params object or url string` + 
-			`${asString && `: ${asString}` || ''}`
+			`${debugString && `: ${debugString}` || ''}`
 		)
 	}
 
@@ -280,7 +280,7 @@ function parseResultBuildUrl(route: Route, result: unknown): RouteRequestData | 
 	if (requestData) return requestData
 	
 	throw new Error(
-		`Could not parse result of build.url${asString && `: ${asString}` || ''}`
+		`Could not parse result of build.url${debugString && `: ${debugString}` || ''}`
 	)		
 }
 
@@ -289,9 +289,16 @@ export async function responseHandler(
 	htmlTransform: HTMLTransform = async x => x,
 ): Promise<Response> | never {
 
-	// 404: nothing returned or user explicitly returned false, null, or undefined
-	if (input === undefined || input === false || input === null) {
-		return new Response(null, { status: 404 })
+	// undefined returned, this is probably an error
+	if (input === undefined) {
+		throw new Error(`Nothing returned from handler`)
+	}
+
+	// user explicitly returned false, or null
+	// NOTE: for now, let's consider this an error, but the intent could
+	// be for a 404, or passing through to another overlapping route
+	if (input === false || input === null) {
+		throw new Error(`Unsupported return value from route "${typeof input}"`)
 	}
 
 	// accept a web Response object
@@ -300,8 +307,11 @@ export async function responseHandler(
 			return copyResponse(input, {
 				body: await htmlTransform(await input.text())
 			})
+		} else {
+			// TODO: support other Content-Types
+			// (this is limited by the static build functionality at the moment)
+			throw new Error(`Currently only "Content-Type: text/*" responses are allowed`)
 		}
-		return input
 	}
 
 	// any string is considered a text/html document by default
@@ -365,8 +375,9 @@ function mergeHeaders(...sources: HeadersInit[]): Headers {
 }
 
 
-function toString(obj: unknown) {
-	let string = typeof obj?.toString === 'function' ? obj.toString() : ''
+function toDebugString(obj: unknown) {
+	if (typeof obj === 'undefined') return 'undefined'
+	let string = typeof obj?.toString() === 'function' ? obj.toString() : ''
 	if (string.startsWith('[object')) {
 		try { string = JSON.stringify(obj, null, 2) } catch(e) {}
 	}

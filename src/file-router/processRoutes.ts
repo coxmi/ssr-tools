@@ -27,9 +27,10 @@ import {
 } from './request.ts'
 
 
-type BuildStaticOpts = {
-	htmlTransform?: (html: string) => Promise<string>,
+type BuildStaticItemOpts = {
+	htmlTransform?: (html: string) => Promise<string>
 	importer?: (path: string) => Promise<unknown>
+	fixStacktrace?: (e: Error) => void
 }
 
 class BuildStaticItem {
@@ -40,14 +41,16 @@ class BuildStaticItem {
 		this.route = route
 	}
 
-	async buildStatic(options: BuildStaticOpts = {}): Promise<MultiError> {
+	async buildStatic(options: BuildStaticItemOpts = {}): Promise<MultiError> {
 		const { 
 			htmlTransform = async html => html,
-			importer = async (path: string) => await import(path)
+			importer = async (path: string) => await import(path),
+			fixStacktrace = (e: Error) => {}
 		} = options
 
 		const pageErrors = new MultiError('', { 
-			prefix: this.route.name
+			prefix: this.route.name,
+			fixStacktrace
 		})
 
 		let compiled: FileRoute
@@ -108,19 +111,29 @@ class BuildStaticItem {
 /**
 	Builds routes into static files. Usage:
 	```ts
-	const builder = new BuildStatic(route: Route)
+	const builder = new BuildStatic(route: Route, options)
 	builder.build({ htmlTransform, importer })
 	builder.write(outputDir, buildDir)
 	```
 */
 
+type BuildStaticOpts = {
+	fixStacktrace?: (e: Error) => void
+}
+
 export class BuildStatic {
 	builders: BuildStaticItem[] = []
-	errors: MultiError = new MultiError('(static) error while building pages')
+	errors: MultiError
 	processed: Record<string, string> = {}
 	
-	constructor(...routes: Route[]) {
-		this.add(...routes)
+	constructor(options: BuildStaticOpts = {}) {
+		const {
+			fixStacktrace = (e: Error) => {}
+		} = options
+
+		this.errors = new MultiError('(static) error while building pages', {
+			fixStacktrace
+		})
 	}
 
 	add(...routes: Route[]) {
@@ -137,13 +150,13 @@ export class BuildStatic {
 		await Promise.all(this.builders.map(async builder => {
 			await Promise.all(builder.output.map(async (output) => {
 				const [url, response] = output
-				if (!isTextFormat(response)) {
-					// TODO: support other Content-Types
-					this.errors.add(new Error(`Only "Content-Type: text/*" responses are allowed`))
+
+				const body = await response.text()
+				if (typeof body === 'undefined') {
+					this.errors.add(new Error(`${url} – Nothing returned from handler`))
 					return
 				}
-				const body = await response.text()
-				if (typeof body === 'undefined') return
+
 				const ext = extension(response)
 				const filename = outputFileName(url, ext)
 				const exists = this.processed[filename]	
