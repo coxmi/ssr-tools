@@ -134,7 +134,11 @@ export function fileRouter(opts: FileRouterUserOptions): PluginOption {
 				// what's the preferred solution to this?
 				// Astro just sends chrome devtools to next()
 				// https://github.com/withastro/astro/blob/main/packages/astro/src/vite-plugin-astro-server/plugin.ts#L142
-				const matched = devMatchRoute(settings, ctx.path)
+				const routes = buildRoutes({
+					dir: settings.routerDirAbsolute,
+					files: glob.sync(settings.routerGlobAbsolute),
+				})
+				const matched = routes.matchRoute(ctx.path)
 				if (!matched) return
 
 				const isErrorRoute = html.startsWith('<!--dev-error-route-->')
@@ -219,7 +223,11 @@ export function fileRouter(opts: FileRouterUserOptions): PluginOption {
 					server.middlewares.use(async (req, res, next) => {
 						const url = req.originalUrl
 						if (!url) return next()
-						const matchedRoute = devMatchRoute(settings, url)
+						const routes = buildRoutes({
+							dir: settings.routerDirAbsolute,
+							files: glob.sync(settings.routerGlobAbsolute),
+						})
+						const matchedRoute = routes.matchRoute(url)
 						if (!matchedRoute) return next()
 						const { route, params } = matchedRoute
 						const request = webRequestFromNode(req, res)
@@ -250,7 +258,7 @@ export function fileRouter(opts: FileRouterUserOptions): PluginOption {
 							)
 						)
 						if (!(errors instanceof Error)) return
-						console.log(errors)
+						console.error(errors)
 						// send error as soon as the response has closed & the websocket connection has connected
 						// (remove the connection event listener after it's sent, so it only applies to this request)
 						res.addListener('close', () => {
@@ -338,7 +346,7 @@ export function fileRouter(opts: FileRouterUserOptions): PluginOption {
 						settings.buildDirAbsolute
 					)
 				} catch(e) {
-					console.log(e)
+					console.error(e)
 					const endBuild = new Error()
 					endBuild.stack = ''
 					throw endBuild
@@ -388,6 +396,8 @@ export async function fileRouterMiddleware(configPathOrFolder: string = '') {
 		const matchedRoute = routes.matchRoute(url)
 		if (!matchedRoute) {
 			// TODO: needs default _error handling for 404s
+			// this function should return next(), but we still need to queue the default
+			// error handler as the last middleware for 404s.
 			// for now let's just respond with a basic err
 			return sendNodeResponse(new Response(null, { status: 404 }), res)
 		}
@@ -415,7 +425,9 @@ export async function fileRouterMiddleware(configPathOrFolder: string = '') {
 
 		const { route, params } = matchedRoute
 		const request = webRequestFromNode(req, res)
-		// TODO: create a faster requestHandler for prod
+
+		// TODO: create a faster requestHandler for prod that caches 
+		// compiled routes, rather than re-importing them on every request
 		const [response, errors] = await devRequestHandler({ 
 			request, route, params,
 			htmlTransform: async html => {
@@ -427,7 +439,7 @@ export async function fileRouterMiddleware(configPathOrFolder: string = '') {
 		if (!errors.length) {
 			return sendNodeResponse(response, res)	
 		} else {
-			console.log(errors)
+			console.error(errors)
 			return sendNodeResponse(new Response(null, { status: 500 }), res)	
 		}	
 	}
@@ -492,13 +504,4 @@ export function settingsFromConfig(config: ResolvedConfig, userOptions: FileRout
 		routerDirAbsolute,
 		routerGlobAbsolute
 	}
-}
-
-
-function devMatchRoute(settings: SettingsFromConfig, url: string) {
-	const routes = buildRoutes({
-		dir: settings.routerDirAbsolute,
-		files: glob.sync(settings.routerGlobAbsolute),
-	})
-	return routes.matchRoute(url)
 }

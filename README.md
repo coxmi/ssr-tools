@@ -77,8 +77,8 @@ defineConfig({
    plugins: [
       fileRouter({
       	  // default options
-         dir: 'src/pages'
-         glob: '**/*.{ts,tsx,js,jsx}'
+         dir: 'src/pages',
+         glob: '**/*.{ts,tsx,js,jsx}',
          removeTrailingSlash: true
       }),
    ],
@@ -147,15 +147,14 @@ To render static pages, Export a `build` object to your route:
 ```ts
 
 export default build = {
-   // return an iterable, and a page will
-   // be generated for each entry
-   from: await getPages()
+   // return an iterable, and a page will be generated for each entry
+   from: () => await getPages()
    
    // specify your url params
-   // props is each entry from `from`
-   url: props => {
+   // (`props` is each entry from the `from` function)
+   url: props => ({
       slug: slugify(props.title)
-   }
+   })
 }
 
 // render the content from `ctx.props`

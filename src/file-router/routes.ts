@@ -128,6 +128,7 @@ export function buildRoutes({ files, dir, setImport }: BuildRoutesArgs) {
     return {
     	routes,
     	errorRoutes,
+    	defaultError,
     	matchRoute: function (path: string, route?: Route): MatchedRoute | false {
 	    	const withoutQuery = path.replace(queryMatch, '')
 	    	if (route) {
@@ -350,36 +351,4 @@ export function regexes(segments: Array<RegExp|string>, flags?: string) {
         }).join(''),
         flags
     )
-}
-
-const permalinkPattern:RegExp = regexes(
-    [
-        // just a root path: "/",
-        /^\/$|/,
-        // or:
-            // negative lookahead across pattern
-            // to catch likely mistakes
-            `^(?!`,
-                // disallow more than double dots everywhere
-                /.*\.{3,}.*|/,
-                // disallow double dots at start of files
-                /.*\.{2,}(?!\/|$)/,
-            `)`,
-            // start with slash
-            /\//,
-            // path segment, 1 or more
-            `(?:`,
-                // standard limited characters
-                /[a-z0-9-_.]+/,
-                // optional trailing slash
-                /\/?/,
-            `)+`,
-        // end (discounts ?query, #hash, etc.)
-        /$/
-    ],
-    'i'
-)
-
-function validateUrl(permalink: string): boolean {
-    return permalinkPattern.test(permalink)   
 }
