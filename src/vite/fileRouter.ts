@@ -11,7 +11,7 @@ import * as middleware from './../file-router/middleware.ts'
 import { webRequestFromNode, sendNodeResponse } from './../file-router/request.ts'
 import { devStyles, findConfigFile, toAbsolutePath } from './utility.ts'
 import { isObject } from './../utility/object.ts'
-import { sha } from './../utility/crypto.ts'
+import { sha, random } from './../utility/crypto.ts'
 import { ssrHotModuleReload } from './ssrHotModuleReload.ts'
 import { viteDevErrorPayload } from './viteDevErrorPayload.ts'
 
@@ -150,6 +150,7 @@ export function fileRouter(opts: FileRouterUserOptions): PluginOption {
 
 				// save stylesheets indexed per module for use in load hook
 				const id = sha(mod)
+				const refresh = random()
 				const css = await devStyles(importedModules, ctx.server)
 				stylesheets.clear()
 				stylesheets.set(id, css)
@@ -160,7 +161,7 @@ export function fileRouter(opts: FileRouterUserOptions): PluginOption {
 						tag: 'link',
 						attrs: {
 							rel: 'stylesheet',
-							href: `/@file-router-styles.css?v=${id}`,
+							href: `/@file-router-styles.css?id=${id}&v=${refresh}`,
 						},
 						injectTo: 'head'
 					},
@@ -170,7 +171,7 @@ export function fileRouter(opts: FileRouterUserOptions): PluginOption {
 						tag: 'script',
 						attrs: {
 							type: 'module',
-							src: `/@file-router-styles-dev?v=${id}`,
+							src: `/@file-router-styles-dev?id=${id}&v=${refresh}`,
 						},
 						injectTo: 'body'
 					}
@@ -180,9 +181,10 @@ export function fileRouter(opts: FileRouterUserOptions): PluginOption {
 			load(id, options) {
 				if (options?.ssr) return
 				const getStylesheets = (id: string) => {
-					const sha = new URLSearchParams(id.split('?').pop()).get('v') || ''
+					const sha = new URLSearchParams(id.split('?').pop()).get('id') || ''
 					return stylesheets.get(sha) || []
 				}
+
 				// statically included styles on initial page load
 				if (id.startsWith('/@file-router-styles.css?')) {
 					return getStylesheets(id).map(sheet => sheet.css).join('\n')

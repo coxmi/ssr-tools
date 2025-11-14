@@ -13,7 +13,7 @@ export type CSS = { id: string | null, file: string | null, css: string | null }
 export async function devStyles(
 	modules: Set<ModuleNode>, 
 	server: ViteDevServer
-) {
+) {	
 	const styleModules = await devCollectStyleModules(modules)
 	const styleInfoPromises = styleModules.map(async mod => {
 		let css = mod?.ssrModule?.default
@@ -28,7 +28,8 @@ export async function devStyles(
 			css: typeof css === 'string' ? css : ''
 		}
 	})
-	return await Promise.all(styleInfoPromises)
+	const styleInfo = await Promise.all(styleInfoPromises)
+	return styleInfo
 }
 
 function devCollectStyleModules(

@@ -11,3 +11,7 @@ export function sha(text: Buffer | string, length = 8): string {
   if (length <= 64) return h
   return h.padEnd(length, '_')
 }
+
+export function random() {
+	return Math.random().toString(36).padEnd(20, '0').substring(2, 11)
+}
